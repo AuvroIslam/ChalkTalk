@@ -227,6 +227,43 @@ def test_nothing_marked_under_the_bar_and_no_deferring_labels(qapp, slide, slide
     assert len(items) == 1                                               # arrow kept, deferring label dropped
 
 
+def test_graph_nodes_are_recovered_and_summary_path_is_traced(qapp):
+    """A drawn graph: single-letter nodes in circles and 1-digit weights, which plain OCR
+    drops. They must be recovered, nodes must map to their circles, and a summary that
+    names a path must trace it edge by edge."""
+    from PIL import ImageDraw, ImageFont
+    from compose import Composer
+    from items import Trace
+    from layout import Scene
+    from ocr import ocr_lines
+
+    img = Image.new("RGB", (1600, 900), "white")
+    d = ImageDraw.Draw(img)
+    f, fw = ImageFont.truetype("arialbd.ttf", 40), ImageFont.truetype("arial.ttf", 36)
+    nodes = {"A": (300, 450), "B": (800, 250), "C": (1300, 450)}
+    d.line([nodes["A"], nodes["B"]], fill="black", width=3)
+    d.line([nodes["B"], nodes["C"]], fill="black", width=3)
+    for n, (x, y) in nodes.items():
+        d.ellipse((x - 45, y - 45, x + 45, y + 45), outline="black", width=3, fill="white")
+        d.text((x - 13, y - 22), n, font=f, fill="black")
+    d.text((520, 300), "5", font=fw, fill="black")
+    d.text((1060, 300), "7", font=fw, fill="black")
+    s = Scene(img, ocr_lines(img), 1.0)
+    got = {l.text: l for l in s.lines}
+    assert {"A", "B", "C"} <= set(got) and {"5", "7"} <= set(got)
+    assert got["A"].kind == "node" and got["A"].box.w > 80          # the whole circle, not the letter
+    c = Composer(s)
+    items = c.build({"op": "summary", "text": "Shortest path A → B → C, cost 12"})
+    assert sum(isinstance(i, Trace) for i in items) == 2
+    # value tags: an improvement strikes the old value; the same value again is ignored
+    from items import Note, Tag
+    first = c.build({"op": "tag", "target": got["B"].id, "text": "d=9"})[0]
+    better = c.build({"op": "tag", "target": got["B"].id, "text": "d=5"})[0]
+    assert isinstance(first, Tag) and first.strike is None and better.strike is not None
+    assert c.build({"op": "tag", "target": got["B"].id, "text": "d = 5"}) == []
+    assert isinstance(c.build({"op": "tag", "target": got["C"].id, "text": "this is a whole sentence"})[0], Note)
+
+
 def test_every_item_paints_at_every_stage(qapp, slide, slide_lines):
     from PySide6.QtGui import QImage, QPainter
 

@@ -6,6 +6,7 @@ explained with circles, arrows, notes and sketches drawn right on top.
 """
 from __future__ import annotations
 
+import os
 import sys
 import threading
 import time
@@ -27,9 +28,12 @@ from compose import Composer, warm_up
 from layout import Scene
 from ocr import Box, ocr_lines
 import voice
+from narrator import Narrator
 from overlay import Bar, Canvas
 
 DEMO = "--demo" in sys.argv
+os.environ.setdefault("QT_LOGGING_RULES", "qt.multimedia*=false")  # quiet the audio library's chatter
+os.environ.setdefault("QT_FFMPEG_DEBUG", "0")
 
 # Starter prompts in the bar, matched to what's open (updated once the source is detected).
 STARTERS = {
@@ -104,6 +108,8 @@ class App:
         self.bar = Bar()
         self.pill = self.bar  # older name, still used by the test drivers
         self.recorder = voice.Mic()
+        self.narrator = Narrator()
+        self._answer_done = False
         self.answering = False
         self._listen_after_capture = False
         self.pool = ThreadPoolExecutor(max_workers=4)
@@ -132,6 +138,11 @@ class App:
         self.bar.speak.connect(self.on_speak)
         self.canvas.cancelled.connect(self.dismiss)
         self.canvas.item_started.connect(self.bar.say)
+        self.canvas.voice_busy = lambda: self.narrator.busy  # the next step waits for the voice
+        self.canvas.step_started.connect(self.on_step)
+        self.canvas.idle.connect(self.on_all_drawn)
+        self.narrator.done.connect(lambda: setattr(self.bar.mascot, "talking", False))
+        self.bar.voice_toggled.connect(self.narrator.set_enabled)
         self.canvas.window_focus_request = lambda: (self.bar.raise_(), self.bar.activateWindow(), self.bar.edit.setFocus())
         self.bar.mascot.gaze_provider = self.canvas.pen_position  # eyes follow the pen while drawing
         self.recorder.level.connect(lambda v: setattr(self.bar.mascot, "level", v))
@@ -228,10 +239,12 @@ class App:
         """Stop: ends a recording, else stops the answer, else closes."""
         if self.recorder.active:
             self.recorder.stop()
-        elif self.answering:
+        elif self.answering or self.canvas.pending():
             self._cancel()
             self.gen += 1
             self.answering = False
+            self.canvas.stop_steps()
+            self.narrator.stop()
             self._mood("idle", "Stopped. Ask something else?")
         else:
             self.dismiss()
@@ -240,7 +253,8 @@ class App:
         screen = QGuiApplication.screenAt(QCursor.pos()) or QGuiApplication.primaryScreen()
         self.shot = grab_monitor_under_cursor()
         self.scale = screen.geometry().width() / self.shot.image.width
-        self.bar.position = self._emptier_edge(screen)
+        self._edge_map(screen)
+        self.bar.spot = self._best_spot(screen, compact=False)
         self.gen += 1
         self.session = None
         self.ocr_job = self.pool.submit(ocr_lines, self.shot.image)  # runs while you type
@@ -256,20 +270,63 @@ class App:
             self._listen_after_capture = False
             self.on_speak()
 
-    def _emptier_edge(self, screen) -> str:
-        """Put the bar where it covers the least: compare how busy the top and bottom bands are."""
+    def _edge_map(self, screen) -> None:
+        """How busy each part of the screen is (edges in a quarter-size copy)."""
         import cv2
         import numpy as np
 
         img = self.shot.image
-        small = np.asarray(img.convert("L").resize((img.width // 4, img.height // 4)))
-        edges = cv2.Canny(small, 40, 120) > 0
-        g, avail = screen.geometry(), screen.availableGeometry()
-        band = int(230 / self.scale / 4)  # the bar's height plus a margin, in quarter-pixels
-        bottom_end = int((avail.bottom() - g.y()) / self.scale / 4)
-        top = edges[:band].mean()
-        bottom = edges[max(0, bottom_end - band):bottom_end].mean()
-        return "bottom" if bottom < top * 0.8 else "top"
+        small = np.asarray(img.convert("L").resize((max(1, img.width // 4), max(1, img.height // 4))))
+        self._edges = cv2.Canny(small, 40, 120) > 0
+
+    def _keep_bar_clear(self, action: dict) -> None:
+        """If this step points at something under the bar, move the bar out of the way
+        (to the spot clear of everything taught so far) instead of skipping the step."""
+        sc = self.composer.scene if self.composer else None
+        if sc is None or not sc.hidden or not self.bar.compact:
+            return
+        boxes = []
+        for key, ph in (("target", "phrase"), ("from", "from_phrase"), ("to", "to_phrase")):
+            if action.get(key) is not None:
+                b = sc.resolve(action.get(key), action.get(ph))
+                if b is not None:
+                    boxes.append(b)
+        self._targets += boxes
+        bar = sc.hidden[0]
+        hit = lambda b, r: b.cx >= r.x and b.cx <= r.x2 and b.cy >= r.y and b.cy <= r.y2
+        if not any(hit(b, bar) for b in boxes):
+            return
+        scr = self.canvas.screen()
+        spot = self._best_spot(scr, compact=True, avoid=self._targets)
+        self.bar.set_compact(True, scr, spot)
+        new = self.bar.box_on(scr).pad(10)
+        sc.unreserve(bar)
+        sc.reserve(new, 3.0)
+        sc.hidden[0] = new
+
+    def _best_spot(self, screen, compact: bool, avoid=None) -> tuple[float, float]:
+        """Put the bar where it covers the least content. Asking: top or bottom centre.
+        Teaching (compact): also the four corners - the drawing needs the middle."""
+        geo, avail = screen.geometry(), screen.availableGeometry()
+        w, h = self.bar.size_for(screen, compact)
+        W, bottom = geo.width(), avail.bottom() - geo.y()
+        m = 14
+        cands = [((W - w) / 2, m), ((W - w) / 2, bottom - h - m)]
+        if compact:
+            cands += [(m, m), (W - w - m, m), (m, bottom - h - m), (W - w - m, bottom - h - m)]
+        k = 1 / self.scale / 4  # logical px -> quarter physical px
+
+        def cost(x, y):
+            e = self._edges[int(y * k):int((y + h) * k) + 1, int(x * k):int((x + w) * k) + 1]
+            c = float(e.mean()) if e.size else 1.0
+            if y < geo.height() / 3:
+                c *= 0.6  # the top of a window is usually tabs and toolbars: cheaper to cover than content
+            for a in ([avoid] if isinstance(avoid, Box) else avoid or []):
+                if x < a.x2 and a.x < x + w and y < a.y2 and a.y < y + h:
+                    c += 10  # never on the part you selected, or on what's being taught
+            return c
+
+        return min(cands, key=lambda p: cost(*p))
 
     def on_submit(self, question: str):
         follow_up = self.session is not None
@@ -283,8 +340,13 @@ class App:
             self.recorder.stop(deliver=False)
             self.bar.listening(False)
         self.answering = True
+        self._answer_done = False
+        self._targets = []  # everything this answer points at, so the bar can stay clear of it
+        self.narrator.stop()
         selection = self.canvas.selection_box()
         scr = self.canvas.screen()
+        # While teaching, the bar shrinks to a pill and moves to the emptiest corner or edge.
+        self.bar.set_compact(True, scr, self._best_spot(scr, compact=True, avoid=selection))
         pill_box = [self.bar.box_on(scr).pad(10)]
         geo, avail = scr.geometry(), scr.availableGeometry()  # (not `g`: that's this question's generation)
         if avail.bottom() < geo.bottom():  # the taskbar: never draw on it
@@ -292,6 +354,8 @@ class App:
         self.canvas.clear()
         self.canvas.begin_draw()
         self.bar.begin_draw(question)
+        if not DEMO and __import__("planner")._WALKTHROUGH.search(question or ""):
+            self.bar.thinking(True, "Working it out step by step")  # planning a walkthrough takes a little longer
         if follow_up:
             self.session.scene.reserved[:] = 0
             self.composer = Composer(self.session.scene)
@@ -360,25 +424,39 @@ class App:
             self.bar.mascot.set_mode("drawing")
             print(f"  first drawing after {(time.perf_counter() - self.t_submit) * 1000:.0f} ms")
         try:
+            self._keep_bar_clear(action)
             items = self.composer.build(action)
         except Exception:
             traceback.print_exc()
             return
         if items:
-            self.canvas.add(items)
+            self.canvas.add_step(items, action.get("say"))  # drawn and spoken in turn, like a teacher
+        else:
+            print(f"  not drawn: {action.get('op')} {action.get('target', '')}{action.get('from', '')}"
+                  f"{'->' + str(action.get('to')) if action.get('to') else ''} (not found, hidden or a repeat)")
+
+    def on_step(self, say: str):
+        self.bar.say(say)
+        self.narrator.say(say)
+        self.bar.mascot.talking = self.narrator.enabled
+
+    def on_all_drawn(self):
+        if self._answer_done and not self.answering:
+            self._mood("happy", "Done! Ask a follow-up →")
+            self.bar.show_followup()
 
     def on_finished(self, g, error):
         if g != self.gen:
             return
         self.answering = False
+        self._answer_done = True
         print(f"  answer complete after {(time.perf_counter() - self.t_submit) * 1000:.0f} ms")
         if error:
             self._mood("sad", "⚠️ " + error[:160])
-        elif not self.canvas.items:
+        elif not self.canvas.items and not self.canvas.steps:
             self._mood("sad", "I couldn't find anything to mark. Try selecting the area.")
-        else:
-            QTimer.singleShot(int(self._remaining() * 1000) + 300,
-                              lambda: g == self.gen and self._mood("happy", "Ask a follow-up, or press Stop to clear."))
+        elif not self.canvas.pending():
+            self.on_all_drawn()  # otherwise the canvas says so when the last step is drawn and spoken
 
     def _remaining(self) -> float:
         now = time.monotonic()
@@ -390,6 +468,7 @@ class App:
 
     def dismiss(self):
         self._cancel()
+        self.narrator.stop()
         self.recorder.stop(deliver=False)
         self.answering = False
         self.gen += 1

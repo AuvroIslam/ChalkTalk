@@ -18,6 +18,16 @@ Press **Ctrl+Shift+Space** over a slide, a PDF, a YouTube video, code or a web p
 
 **Stop** does the sensible thing: it ends a recording, otherwise stops an answer, otherwise closes.
 
+**It teaches like a teacher.** Every step is spoken aloud (Windows voices, offline), and the next step only starts after the voice has finished. Strokes are drawn at a hand's pace, and 🔊 in the bar mutes the voice. While it teaches, the bar shrinks to a pill and gets out of the way of whatever it is explaining.
+
+**Live walkthroughs.** Ask things like "show how I reach A to E" or "walk me through it", and ChalkTalk actually runs the algorithm on your screen, step by step:
+- it circles each node as it's settled;
+- it traces each edge it relaxes;
+- it writes each distance next to its node, crossing out the old value when a better one is found;
+- it finishes by drawing the final path in red.
+
+Graph node letters and single-digit weights, which OCR normally skips, are recovered by reading them together on one strip, and each node is mapped to its whole circle.
+
 Before answering, it checks whether it knows enough. If the screen is enough, it draws straight away. If not, it first reads more: the video's captions, other pages of the PDF, the whole web page, or a web search.
 
 ## Setup

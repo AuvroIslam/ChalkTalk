@@ -30,7 +30,11 @@ CASES = [
     ("pdf", f"file:///{PDF}", ".pdf", "How are entries judged? What are the criteria and points?", False),
     ("web", "https://en.wikipedia.org/wiki/Gradient_descent", "Gradient descent",
      "What variants of this method does the article list further down?", False),
+    ("dijkstra", "file:///" + (Path(__file__).resolve().parents[2] / "dijkstra-slides.pdf").as_posix() + "#page=3",
+     "dijkstra|Slide 1", "explain the dijkstra live, show how can I reach from A to E", False),
 ]
+if len(sys.argv) > 2:  # run only the named cases: live_e2e.py OUT dijkstra slide
+    CASES = [c for c in CASES if c[0] in sys.argv[2:]]
 user32 = ctypes.windll.user32
 
 
@@ -43,7 +47,7 @@ def find_window(fragment, timeout=20):
         def cb(h, _):
             b = ctypes.create_unicode_buffer(400)
             user32.GetWindowTextW(h, b, 400)
-            if user32.IsWindowVisible(h) and fragment in b.value and "Google Chrome" in b.value:
+            if user32.IsWindowVisible(h) and any(f in b.value for f in fragment.split("|")) and "Google Chrome" in b.value:
                 hits.append(h)
             return True
 
@@ -96,7 +100,17 @@ def main():
 
     def finished(g, err):
         name, hwnd = state["case"]
-        QTimer.singleShot(int(chalk_app._remaining() * 1000) + 1200, lambda: snap(name, hwnd))
+        t_done = time.perf_counter()
+
+        def wait_until_taught():  # steps are drawn and spoken one by one: wait for the last
+            if chalk_app.canvas.pending():
+                QTimer.singleShot(500, wait_until_taught)
+                return
+            print(f"  taught in {time.perf_counter() - state['t0']:.0f}s "
+                  f"(answer streamed {t_done - state['t0']:.0f}s; {len(chalk_app.canvas.items)} marks)")
+            QTimer.singleShot(1000, lambda: snap(name, hwnd))
+
+        wait_until_taught()
 
     chalk_app.bridge.finished.connect(finished)
 
@@ -119,6 +133,7 @@ def main():
             press_k()
             time.sleep(1)
         state["case"] = (name, hwnd)
+        state["t0"] = time.perf_counter() + 2.5
         chalk_app.on_hotkey()
         QTimer.singleShot(2500, lambda: chalk_app.on_submit(question))
 
