@@ -213,6 +213,11 @@ class Composer:
         return [Trace(_edge_point(s, _center(e), 1), _edge_point(e, _center(s), 1), ink)]
 
     def _op_tag(self, a):
+        if isinstance(a.get("target"), list):  # one step, many values: e.g. "∞" on every other node
+            out: list[Item] = []
+            for t in a["target"][:20]:
+                out += self._op_tag(dict(a, target=t))
+            return out
         b = self._resolve_visible(a.get("target"), a.get("phrase"))
         text = str(a.get("text", "")).strip()
         if b is None or not text:
@@ -225,14 +230,17 @@ class Composer:
             self.skipped_duplicates += 1
             return []  # same value again: nothing to correct
         self.tag_text[key] = text
-        fm = QFontMetricsF(self.tag_font)
+        font = self.tag_font
+        if "∞" in text:  # ∞ is a lowercase-sized glyph: write it bigger so it reads from afar
+            font = _font(round(config.NOTE_FONT_PX * 1.6), True, "Segoe UI")
+        fm = QFontMetricsF(font)
         top, _, bottom = _metrics(fm)
         w, h = fm.horizontalAdvance(text) + 18, top + bottom + 10
         box, _ = self.scene.place(w, h, old.pad(2) if old is not None else b)
         self.tags[key] = box
         card = self._card_for(box)
         name = self._ink_name(a)
-        return [Tag(box, text, self.tag_font, top + 5, self._ink_on_card(name, card), card, old)]
+        return [Tag(box, text, font, top + 5, self._ink_on_card(name, card), card, old)]
 
     # -- notes -----------------------------------------------------------------
 

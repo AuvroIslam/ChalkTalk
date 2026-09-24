@@ -262,6 +262,11 @@ def test_graph_nodes_are_recovered_and_summary_path_is_traced(qapp):
     assert isinstance(first, Tag) and first.strike is None and better.strike is not None
     assert c.build({"op": "tag", "target": got["B"].id, "text": "d = 5"}) == []
     assert isinstance(c.build({"op": "tag", "target": got["C"].id, "text": "this is a whole sentence"})[0], Note)
+    # one step writes "∞" on several nodes; a real distance later crosses the ∞ out
+    c2 = Composer(Scene(img, ocr_lines(img), 1.0))
+    inf = c2.build({"op": "tag", "target": [got["B"].id, got["C"].id], "text": "∞"})
+    assert len(inf) == 2 and all(isinstance(i, Tag) for i in inf)
+    assert c2.build({"op": "tag", "target": got["C"].id, "text": "d=12"})[0].strike is not None
 
 
 def test_every_item_paints_at_every_stage(qapp, slide, slide_lines):

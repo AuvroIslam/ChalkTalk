@@ -287,8 +287,9 @@ class App:
             return
         boxes = []
         for key, ph in (("target", "phrase"), ("from", "from_phrase"), ("to", "to_phrase")):
-            if action.get(key) is not None:
-                b = sc.resolve(action.get(key), action.get(ph))
+            t = action.get(key)
+            for one in (t if isinstance(t, list) and action.get("op") == "tag" else [t]):
+                b = sc.resolve(one, action.get(ph)) if one is not None else None
                 if b is not None:
                     boxes.append(b)
         self._targets += boxes
