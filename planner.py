@@ -385,7 +385,7 @@ class Session:
                                              or (self._walkthrough and round_no == 0),
                                              on_action=on_action, gate=gate,
                                              # a walkthrough, or a drawing to point into, needs a closer look
-                                             reasoning=("low" if self._walkthrough or self.drawing_lesson
+                                             reasoning=(config.DRAW_REASONING if self._walkthrough or self.drawing_lesson
                                                         else config.REASONING) if round_no == 0
                                              else config.AFTER_LOOKUP_REASONING)
             self._must_answer = False
@@ -499,11 +499,16 @@ class Session:
         kwargs = dict(model=config.MODEL, messages=self.messages, stream=True, max_completion_tokens=6000)
         if "azure" not in str(self.client.base_url):  # Azure caches automatically and may reject this field
             kwargs["prompt_cache_key"] = "chalktalk-v1"
+        reasoning = config.REASONING if reasoning is None else reasoning
+        # Some newer models (gpt-5.4+ on OpenAI's chat API) refuse tools together with reasoning.
+        # Then the drawing request goes without tools: the typed context check still fetches
+        # whatever is missing, before this request, with no tools needed.
+        if config.NO_TOOLS_WITH_REASONING and reasoning and reasoning != "none":
+            tools = []
         if tools:
             kwargs["tools"] = tools
             kwargs["tool_choice"] = "none" if force_answer else "auto"
             kwargs["parallel_tool_calls"] = True
-        reasoning = config.REASONING if reasoning is None else reasoning
         if reasoning:
             kwargs["reasoning_effort"] = reasoning
         parser = ActionStream()

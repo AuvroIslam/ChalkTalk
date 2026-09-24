@@ -26,6 +26,10 @@ REASONING = _get("CHALK_REASONING", "minimal")
 CONTEXT_CHECK = _get("CHALK_CONTEXT_CHECK", "1") == "1"
 # Measured: minimal passed 10/10 scenarios with a 3.0 s median first drawing; low was slower and no better.
 CHECK_REASONING = _get("CHALK_CHECK_REASONING", "minimal")
+NO_TOOLS_WITH_REASONING = MODEL.startswith(("gpt-5.4", "gpt-5.5")) and not AZURE_ENDPOINT
+# Reasoning for walkthroughs and for screens filled by a drawing, where accuracy beats speed.
+# Measured: gpt-5-mini numbered the forces of a video diagram right 19/24 at low, 22/24 at medium.
+DRAW_REASONING = _get("CHALK_DRAW_REASONING", "medium")
 # Reasoning for the answer written after reading more context (only on that slower path).
 AFTER_LOOKUP_REASONING = _get("CHALK_AFTER_LOOKUP_REASONING", REASONING)
 # How many rounds of tool calls (reading more context) before it must answer.
