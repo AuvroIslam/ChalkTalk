@@ -89,7 +89,18 @@ def scenarios():
          {"mentions": r"(?i)momentum|nesterov|stochastic|adam"}, None),
         ("slide: needs fresh facts", slide, None, "Which optimizer do PyTorch's official docs recommend as the default today?",
          True, {}, None),
+        # Not in the document: it must say so first (it may then look it up elsewhere, with a source).
+        ("pdf: answer isn't in the document", frame(pdf_first, bg=(255, 255, 255), fg=(20, 20, 20), size=32, font="segoeui.ttf"),
+         rules_pdf, "Which team won this contest last year?", None, {"admits": ADMITS, "or_cited": True}, None),
+        # Truly unknowable from any source: it must say it can't know, not invent an answer.
+        ("slide: unknowable", slide, None, "What did my lecturer say about this slide in class yesterday?", None,
+         {"admits": ADMITS}, None),
     ]
+
+
+ADMITS = (r"(?i)not (in|on|mentioned|stated|listed|given|found|shown|say|specified|available|recorded)"
+          r"|doesn'?t (say|mention|list|name|include|show)|no (information|mention|record|way)|don'?t (have|know)"
+          r"|can'?t (see|know|tell|find|determine|access|hear|be determined)|cannot|unknown|isn'?t (in|listed|stated|shown)")
 
 
 def run(idx, name, img, make_src, question, expect_tools, checks, selection):
@@ -130,8 +141,11 @@ def run(idx, name, img, make_src, question, expect_tools, checks, selection):
     problems = []
     if err:
         problems.append(err[:120])
-    if bool(tools) != expect_tools:
+    if expect_tools is not None and bool(tools) != expect_tools:
         problems.append(f"expected tools={expect_tools}, used {tools or 'none'}")
+    cited = re.search(r"\((?:[\w-]+\.)+[a-z]{2,}\)|source:|\(p\. ?\d|\(video \d", texts, re.I)
+    if checks.get("admits") and not re.search(checks["admits"], texts) and not (checks.get("or_cited") and cited):
+        problems.append("guessed instead of saying it can't be determined (or citing where it found it)")
     missed = len(actions) - drawn - comp.skipped_duplicates  # duplicates are skipped on purpose
     if actions and missed > 0:
         problems.append(f"{missed}/{len(actions)} actions didn't land on anything")
@@ -145,7 +159,8 @@ def run(idx, name, img, make_src, question, expect_tools, checks, selection):
         problems.append("no page cited")
     if checks.get("mentions") and not re.search(checks["mentions"], texts):
         problems.append(f"answer doesn't contain the facts ({checks['mentions']})")
-    if re.search(r"(?i)\b(look for|see the (section|page)|open the|scroll down|refer to|check the)\b", texts):
+    if not checks.get("admits") and \
+            re.search(r"(?i)\b(look for|see the (section|page)|open the|scroll down|refer to|check the)\b", texts):
         problems.append("sends the user elsewhere instead of answering")
     if checks.get("_outside"):
         problems.append(f"{checks['_outside']} marks outside the selected area")

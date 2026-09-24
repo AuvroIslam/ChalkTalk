@@ -139,8 +139,11 @@ NOT enough when:
 - it asks about current or recent facts: latest versions, what docs recommend today, prices, news, schedules;
 - the answer would otherwise be a guess.
 Otherwise it IS enough. Don't request lookups just to be thorough: speed matters.
+Asking to explain, simplify, give an example of, or walk through what is visible is ALWAYS enough.
 
-If not enough: "missing" says in a few words what is missing, and "lookups" lists at most 3 lookups using only the listed tools, with exact arguments (unused fields null). For read_webpage and every search, put what to look for in "query". If enough: "missing" is "" and "lookups" is []."""
+If not enough: "missing" says in a few words what is missing, and "lookups" lists at most 3 lookups using only the listed tools, with exact arguments (unused fields null). For read_webpage and every search, put what to look for in "query". If enough: "missing" is "" and "lookups" is [].
+
+"cannot_know": if NO screen, document, video, web page or search could ever answer it (what someone said offline, private or personal records, grades, the future), one short honest sentence to the user, e.g. "I can't know what your lecturer said in class." Then lookups is []. Otherwise ""."""
 
 
 def _check_model(tool_names: list[str]) -> type[BaseModel]:
@@ -153,7 +156,8 @@ def _check_model(tool_names: list[str]) -> type[BaseModel]:
         start_page=(int | None, ...), end_page=(int | None, ...),
     )
     return create_model("ContextCheck", __config__=ConfigDict(extra="forbid"),
-                        enough=(bool, ...), missing=(str, ...), lookups=(list[lookup], ...))
+                        enough=(bool, ...), missing=(str, ...), lookups=(list[lookup], ...),
+                        cannot_know=(str, ...))
 
 
 _NARRATION = re.compile(r"(?i)^\s*(i'?ll|i will|i'm going to|let me|let's (check|open|look)|checking|looking (at|for)|"
@@ -222,6 +226,7 @@ class Session:
     def _ask(self, question: str, on_action: Callable[[dict], None]) -> None:
         question = question.strip() or "Explain this to me."
         self._question = question
+        self._honest_note, self._honest_done = "", False
         raw_on_action = on_action
 
         def on_action(a: dict) -> None:
@@ -256,7 +261,11 @@ class Session:
                 return
             if not calls and round_no == 0 and check is not None:
                 verdict = self._verdict(check)
-                if verdict is not None and not verdict.enough:
+                if verdict is not None and verdict.cannot_know.strip() and not self._honest_done:
+                    self._honest_done = True
+                    self._honest_note = verdict.cannot_know.strip()
+                self._say_honest_note(on_action)
+                if verdict is not None and not verdict.enough and not verdict.cannot_know.strip():
                     calls = self._lookups(verdict)  # drawings from this pass are discarded, never shown
                     if calls:
                         text = ""
@@ -296,9 +305,14 @@ class Session:
         return verdict
 
     @staticmethod
-    def _verdict(check: Future):
+    def _verdict(check: Future, timeout: float = 4.0):
+        """The check's verdict, waiting at most `timeout` s: if it stalls, the drawing
+        that is already waiting is shown rather than keeping the user waiting."""
         try:
-            return check.result(timeout=20)
+            return check.result(timeout=timeout)
+        except TimeoutError:
+            print(f"  context check too slow (> {timeout:.0f}s after the drawing was ready); showing the drawing")
+            return None
         except Exception as e:  # the check is a safety net; never block an answer on it
             print(f"  context check failed: {type(e).__name__}: {e}")
             return None
@@ -312,8 +326,17 @@ class Session:
             if not check.done():
                 return None
             v = self._verdict(check)
-            return v is None or v.enough or not self._lookups(v)
+            if v is not None and v.cannot_know.strip() and not self._honest_done:
+                self._honest_done = True
+                self._honest_note = v.cannot_know.strip()  # said first, before any explanation
+            return v is None or v.enough or bool(v.cannot_know.strip()) or not self._lookups(v)
         return gate
+
+    def _say_honest_note(self, on_action) -> None:
+        if self._honest_note:
+            on_action({"op": "note", "text": self._honest_note, "color": "orange"})
+            print(f"  honest: {self._honest_note}")
+            self._honest_note = ""
 
     def _lookups(self, verdict) -> list[dict]:
         calls = []
@@ -360,6 +383,8 @@ class Session:
                 state = gate() if gate else True
                 if state is False:
                     return "", [], []  # the check wants more context; this pass is redone after the lookups
+                if state:
+                    self._say_honest_note(on_action)
                 if state and held:
                     for a in held:
                         on_action(a)
