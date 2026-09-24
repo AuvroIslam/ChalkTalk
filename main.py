@@ -28,7 +28,7 @@ from compose import Composer, warm_up
 from layout import Scene
 from ocr import Box, ocr_lines
 import voice
-from narrator import Narrator
+from narrator import Narrator, fallback_say
 from overlay import Bar, Canvas
 
 DEMO = "--demo" in sys.argv
@@ -431,7 +431,8 @@ class App:
             traceback.print_exc()
             return
         if items:
-            self.canvas.add_step(items, action.get("say"))  # drawn and spoken in turn, like a teacher
+            # drawn and spoken in turn, like a teacher (a step the model forgot to narrate reads its text)
+            self.canvas.add_step(items, action.get("say") or fallback_say(action))
         else:
             print(f"  not drawn: {action.get('op')} {action.get('target', '')}{action.get('from', '')}"
                   f"{'->' + str(action.get('to')) if action.get('to') else ''} (not found, hidden or a repeat)")

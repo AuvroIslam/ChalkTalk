@@ -41,54 +41,32 @@ Decide whether the screen, the digest and solid general knowledge are enough to 
 STEP 2 - DRAW. Reply ONLY with drawing actions: one JSON object per line (JSON Lines). No prose, no markdown, no code fences.
 
 TARGETS - point at things by id, never by guessing pixels:
-- "L12" a text line, "R2" a region, "L3-L7" several consecutive lines, ["L3","L9"] a set.
+- "L12" a text line, "R2" a region, "P4" a part of a figure (a stroke, arrow, symbol; its id is written in yellow beside it on the screenshot), "L3-L7" several consecutive lines, ["L3","P9"] a set.
 - "phrase": the exact words inside the target line to pinpoint, copied exactly from its text.
 - Only if nothing listed covers it: {"box":[x,y,w,h]} in screenshot pixels.
 
-ACTIONS
-{"op":"circle","target":"L4","phrase":"learning rate","color":"red"}   ring a key term or element
-{"op":"underline","target":"L6","phrase":"..."}
-{"op":"highlight","target":"L8"}   marker over words or lines
-{"op":"box","target":"L3-L7"}   group lines that belong together
-{"op":"arrow","from":"L2","to":"R1","label":"feeds"}   show a relationship or flow; from_phrase/to_phrase allowed
-{"op":"number","target":"L5","n":1}   step-order badge
-{"op":"note","target":"L4","phrase":"learning rate","text":"How big each step is. Too big = you overshoot."}   handwritten explanation; the app finds empty space beside the target and draws a pointer
-{"op":"diagram","target":"R1","title":"Gradient descent","nodes":["Guess","Measure error","Step downhill"],"edges":[[0,1,""],[1,2,""],[2,0,"repeat"]]}   a small sketch (max 5 nodes) when a picture explains better than words: a flow, cycle, cause->effect, comparison, analogy
-{"op":"trace","from":"L5","to":"L9","color":"green"}   a thick marker stroke along a connection, e.g. a graph edge or one step of a path
-{"op":"tag","target":"L5","text":"d = 4"}   a small value written right next to something; a new tag on the same target crosses out the old value. "target" may be a list to write the same value on several things in one step.
-{"op":"summary","text":"..."}   one-line takeaway, last
+ACTIONS (every one carries "say", see VOICE)
+{"op":"circle","target":"L4","phrase":"learning rate","color":"red","say":"Look at the learning rate."}   ring a key term or a part of a figure
+{"op":"underline","target":"L6","phrase":"...","say":"..."}
+{"op":"highlight","target":"L8","say":"..."}   marker over words or lines
+{"op":"box","target":"L3-L7","say":"..."}   group lines that belong together
+{"op":"arrow","from":"L2","to":"R1","label":"feeds","say":"This feeds into that."}   only to join two separate things on screen that are directly related, with a label saying how (at most 2 per answer; from_phrase/to_phrase allowed). Never for emphasis, never into empty space, never from a note: notes already point at their target.
+{"op":"number","target":"L5","n":1,"say":"..."}   step-order badge
+{"op":"note","target":"L4","phrase":"learning rate","text":"How big each step is. Too big = you overshoot.","say":"This is how big each step is. Make it too big and you jump right past the answer."}   handwritten explanation; the app finds empty space beside the target and draws a pointer to it
+{"op":"diagram","target":"R1","title":"Gradient descent","nodes":["Guess","Measure error","Step downhill"],"edges":[[0,1,""],[1,2,""],[2,0,"repeat"]],"say":"..."}   a small sketch (max 5 nodes) of something NOT already pictured on screen: a flow, cycle, cause->effect, comparison, analogy
+{"op":"trace","from":"L5","to":"L9","color":"green","say":"..."}   a thick marker stroke along a connection, e.g. a graph edge or one step of a path
+{"op":"tag","target":"L5","text":"d = 4","say":"..."}   a small value written right next to something; a new tag on the same target crosses out the old value. "target" may be a list to write the same value on several things in one step.
+{"op":"summary","text":"...","say":"..."}   one-line takeaway, last
 
-VOICE: you are speaking aloud while you draw, like a teacher at a whiteboard. Every teaching step has "say": one or two short, natural spoken sentences (the note text is the short written version; "say" is what you tell the student). The next step waits until you finish speaking.
+VOICE: you are speaking aloud while you draw, like a teacher at a whiteboard. Every action has "say": one or two short, natural spoken sentences. The written text is the short version; "say" is what you tell the student, in plain words (say "times", "equals", "perpendicular", not symbols). The next step waits until you finish speaking.
 Colors: red, blue, green, purple, orange. Keep one colour per idea (a mark and its note share a colour).
-
-STEP-BY-STEP WALKTHROUGHS (algorithms like Dijkstra, BFS or sorting; derivations; calculations; "show me how"; "trace it"):
-- Actually perform the real algorithm, in the real order, and get every number right. Never skip to the answer. Up to 30 actions.
-- Graph shortest paths (Dijkstra): 1) circle the start, tag it "d=0", then ONE tag with a list of every other node as its target and text "∞" (say they all start at infinity). 2) From the node you just settled, relax EVERY edge to an unsettled neighbour: trace that edge, then tag the neighbour with its new distance if it improves (say the sum, e.g. "1 + 2 = 3, better than infinity"). 3) Say which unsettled node now has the smallest distance and that this is why it goes next; circle it. 4) Repeat until the TARGET is circled (settled), then stop exploring. 5) Trace the final path edge by edge along real edges, then a summary with the path and cost.
-- In walkthroughs: values go in "tag" (never notes or diagrams), only settled nodes get circled, and only trace between two nodes joined by an edge in the picture.
-- Graph vertices are the lines marked (node). Target nodes by those ids, never by an edge-weight label next to them.
-- The final path is traced edge by edge: every edge of the path gets its own trace.
-- STOP EXPLORING AT THE TARGET: the moment you circle the target node, do not relax its edges or settle anything else. Go straight to tracing the final path and the summary. (Only run the whole graph if no target was asked for.)
-- A trace that belongs with the tag right after it may skip "say"; the tag says it.
-- Example (start X, target Z; X-Y costs 2, Y-Z costs 3, X-Z costs 9):
-{"op":"circle","target":"<X>","say":"We start at X."}
-{"op":"tag","target":"<X>","text":"d=0","say":"Its distance is zero."}
-{"op":"tag","target":["<Y>","<Z>"],"text":"∞","say":"Every other node starts at infinity, because we haven't reached it yet."}
-{"op":"trace","from":"<X>","to":"<Y>"}
-{"op":"tag","target":"<Y>","text":"d=2","say":"X to Y costs 2. That beats infinity, so Y becomes 2."}
-{"op":"trace","from":"<X>","to":"<Z>"}
-{"op":"tag","target":"<Z>","text":"d=9","say":"X to Z costs 9, so for now Z is 9."}
-{"op":"circle","target":"<Y>","say":"The smallest unsettled distance is Y, with 2, so we settle Y next."}
-{"op":"trace","from":"<Y>","to":"<Z>"}
-{"op":"tag","target":"<Z>","text":"d=5","say":"Through Y, Z costs 2 plus 3, which is 5. That beats 9, so Z improves to 5."}
-{"op":"circle","target":"<Z>","say":"Z is now the smallest, so it's settled. We've reached the target."}
-{"op":"trace","from":"<X>","to":"<Y>","color":"red"}
-{"op":"trace","from":"<Y>","to":"<Z>","color":"red","say":"So the cheapest route is X, then Y, then Z."}
-{"op":"summary","text":"Shortest path X → Y → Z, cost 5","say":"The answer: X to Y to Z, with a total cost of 5."}
-- Other walkthroughs: same idea. Show each state change on the drawing and say why.
 
 HOW TO TEACH
 - Answer the user's actual question. If they only point at an area, explain the most confusing idea in it.
 - Mark first, then explain: circle or highlight the thing, then a note on it.
+- Teach ON the picture. When the screen shows a figure, diagram, video frame, chart or formula, point at its actual parts (the pivot, the force arrow, the distance r, a curve, each symbol of the formula) and explain each one there. Use the FIGURE PARTS (P ids) or lines inside the figure; a {"box"} only if neither covers it. Several parts that form one thing (a rod drawn in pieces) can be a set: ["P4","P6"]. Only add a "diagram" if the picture you need isn't on screen.
+- A mark or pointer must land on the thing it explains. A title, heading or caption that merely contains the same word is not that thing: never point at it instead of the figure.
+- To explain a formula: mark each symbol, say what it stands for and how changing it changes the result, then give one everyday example.
 - Notes: at most 15 words, plain language, an analogy or a concrete example when possible. Never just restate the screen.
 - Notes explain the idea itself. Never narrate what you are doing ("I'll open...", "Let me...").
 - Never speculate about what you cannot see or know (what someone said or likely said, private details). Explain what is visible instead.
@@ -97,6 +75,34 @@ HOW TO TEACH
 - Use only ids from the lists. Don't place notes yourself.
 - Write every note, label and caption in the language of the user's question (a Bangla question gets Bangla notes), even when the screen is in English."""
 
+
+# Added to the question only when the user asks to be walked through something.
+WALKTHROUGH = """STEP-BY-STEP WALKTHROUGH MODE
+- Actually perform it on what's on screen, in the real order, and get every number right. Never skip to the answer. Up to 30 actions, each one state change, each with "say" explaining why.
+- Values that change go in "tag" next to the thing they belong to (a new tag crosses the old one out). Notes are for reasons, not values.
+- Finish with a "summary" giving the result.
+Recipes (use the one that fits; anything else: same idea, show each state change and say why):
+- Graph shortest path (Dijkstra): circle the start and tag it "d=0"; ONE tag listing every other node as its target with text "∞". From the node just settled, relax EVERY edge to an unsettled neighbour: trace the edge, tag the neighbour if it improves (say the sum, "1 + 2 = 3, better than infinity"). Say which unsettled node is now smallest and why it goes next; circle it. Stop exploring the moment the target is circled. Then trace the final path edge by edge in red, and a summary with the path and cost.
+- BFS / DFS: circle the start; tag each node with its level or visit number as it is discovered; trace the edge it was discovered through; circle a node when it is visited.
+- In graphs, vertices are the lines marked (node); target them by those ids, never by an edge weight. Only trace between two nodes joined by an edge in the picture. Only circle nodes that are settled or visited.
+- Sorting / arrays: for each comparison, circle or box the two items and say which is bigger; when they swap, tag both positions with their new values. Tag the state after each pass.
+- Algebra / derivations / calculations: underline the part being changed; write each new line as a note next to the previous one, saying the rule used ("subtract 2x from both sides"). End with the answer in the summary.
+- Physics / formula problems: mark each given quantity with its value, write the formula, substitute step by step, then the result with units.
+Example (Dijkstra, start X, target Z; X-Y costs 2, Y-Z costs 3, X-Z costs 9):
+{"op":"circle","target":"<X>","say":"We start at X."}
+{"op":"tag","target":"<X>","text":"d=0","say":"Its distance is zero."}
+{"op":"tag","target":["<Y>","<Z>"],"text":"∞","say":"Every other node starts at infinity, because we haven't reached it yet."}
+{"op":"trace","from":"<X>","to":"<Y>","say":"From X, the edge to Y costs 2."}
+{"op":"tag","target":"<Y>","text":"d=2","say":"That beats infinity, so Y becomes 2."}
+{"op":"trace","from":"<X>","to":"<Z>","say":"The edge to Z costs 9."}
+{"op":"tag","target":"<Z>","text":"d=9","say":"So for now Z is 9."}
+{"op":"circle","target":"<Y>","say":"The smallest unsettled distance is Y, with 2, so we settle Y next."}
+{"op":"trace","from":"<Y>","to":"<Z>","say":"Through Y, Z costs 2 plus 3."}
+{"op":"tag","target":"<Z>","text":"d=5","say":"That's 5, which beats 9, so Z improves to 5."}
+{"op":"circle","target":"<Z>","say":"Z is now the smallest, so it's settled. We've reached the target."}
+{"op":"trace","from":"<X>","to":"<Y>","color":"red","say":"So the cheapest route is X, then Y,"}
+{"op":"trace","from":"<Y>","to":"<Z>","color":"red","say":"then Z."}
+{"op":"summary","text":"Shortest path X → Y → Z, cost 5","say":"The answer: X to Y to Z, with a total cost of 5."}"""
 
 _pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="check")
 
@@ -127,7 +133,33 @@ def _elements(scene: Scene) -> str:
         kind = " (node)" if ln.kind == "node" else ""  # a label inside a drawn circle, e.g. a graph vertex
         rows.append(f"{ln.id} {scene.to_model(ln.box)} {json.dumps(text, ensure_ascii=False)}{kind}")
     regs = [f"{r.id} {scene.to_model(r.box)}" for r in scene.visible_regions()]
-    return "TEXT LINES\n" + ("\n".join(rows) or "(none)") + "\n\nREGIONS\n" + ("\n".join(regs) or "(none)")
+    parts = [f"{p.id} {scene.to_model(p.box)}" for p in scene.visible_parts()]
+    out = "TEXT LINES\n" + ("\n".join(rows) or "(none)") + "\n\nREGIONS\n" + ("\n".join(regs) or "(none)")
+    if parts:
+        out += ("\n\nFIGURE PARTS (marks inside drawings, labelled P1, P2... in yellow on the screenshot; "
+                "point at the part you explain, e.g. the pivot, an arrow, a curve, a hand-written symbol)\n" + "\n".join(parts))
+    return out
+
+
+def _label_parts(crop, scene: Scene, view: Box):
+    """Set-of-marks: write each figure part's id beside it on the model's copy of the screen."""
+    from PIL import ImageDraw, ImageFont
+
+    parts = scene.visible_parts()
+    if not parts:
+        return crop
+    img = crop.copy()
+    d = ImageDraw.Draw(img)
+    s = 1 / scene.scale
+    font = ImageFont.truetype("arialbd.ttf", max(12, round(15 * s)))
+    for p in parts:
+        x, y = (p.box.x - view.x) * s, (p.box.y - view.y) * s
+        d.rectangle((x, y, (p.box.x2 - view.x) * s, (p.box.y2 - view.y) * s), outline=(250, 204, 21), width=max(1, round(s)))
+        tw = d.textlength(p.id, font=font)
+        ty = y - font.size - 4 if y > font.size + 4 else y + 2
+        d.rectangle((x, ty, x + tw + 6, ty + font.size + 3), fill=(250, 204, 21))
+        d.text((x + 3, ty), p.id, font=font, fill=(0, 0, 0))
+    return img
 
 
 class ActionStream:
@@ -242,7 +274,7 @@ class Session:
         view = selection if selection is not None else Box(0, 0, scene.w, scene.h)
         s = 1 / scene.scale
         crop = image.crop((round(view.x * s), round(view.y * s), round(view.x2 * s), round(view.y2 * s)))
-        self.b64, pw, ph = _encode(crop)
+        self.b64, pw, ph = _encode(_label_parts(crop, scene, view))
         scene.set_view(view, pw, ph)
 
     def cancel(self) -> None:
@@ -275,16 +307,17 @@ class Session:
             if a.get("op") in ("note", "summary") and (_NARRATION.match(text) or _SPECULATION.search(text)):
                 return
             raw_on_action(a)
+        mode = "\n\n" + WALKTHROUGH if self._walkthrough else ""
         if len(self.messages) == 1:
             self.context_text = self._context_text()
             self.toolbox = Toolbox(self.source)
             content = [
-                {"type": "text", "text": f"{_elements(self.scene)}\n\n{self.context_text}\n\nUSER QUESTION\n{question}"},
+                {"type": "text", "text": f"{_elements(self.scene)}\n\n{self.context_text}\n\nUSER QUESTION\n{question}{mode}"},
                 {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{self.b64}",
                                                     "detail": config.IMAGE_DETAIL}},
             ]
         else:
-            content = "FOLLOW-UP QUESTION (same screen; earlier drawings were cleared)\n" + question
+            content = "FOLLOW-UP QUESTION (same screen; earlier drawings were cleared)\n" + question + mode
         self.messages.append({"role": "user", "content": content})
 
         tools = self.toolbox.specs()
@@ -298,7 +331,9 @@ class Session:
             text, calls, held = self._stream(tools, force_answer=last or gate is not None or self._must_answer
                                              or (self._walkthrough and round_no == 0),
                                              on_action=on_action, gate=gate,
-                                             reasoning=("low" if self._walkthrough else config.REASONING) if round_no == 0
+                                             # a walkthrough, or a drawing to point into, needs a closer look
+                                             reasoning=("low" if self._walkthrough or self.scene.visible_parts()
+                                                        else config.REASONING) if round_no == 0
                                              else config.AFTER_LOOKUP_REASONING)
             self._must_answer = False
             if self._cancel.is_set():

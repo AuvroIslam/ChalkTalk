@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 import tempfile
 import threading
 
@@ -14,6 +15,35 @@ from PySide6.QtCore import QObject, QUrl, Signal
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 
 import config
+
+_SYMBOLS = [("→", " leads to "), ("->", " leads to "), ("⇒", " so "), ("×", " times "), ("·", " times "),
+            ("÷", " divided by "), ("⊥", " perpendicular "), ("≈", " about "), ("≠", " not equal to "),
+            ("≤", " at most "), ("≥", " at least "), ("∞", " infinity "), ("=", " equals "), ("+", " plus "),
+            ("−", " minus "), ("√", " root "), ("²", " squared "), ("³", " cubed "), ("τ", " tau "),
+            ("θ", " theta "), ("Δ", " change in "), ("π", " pi "), ("★", " "), ("/", " or ")]
+
+
+def spoken(text: str) -> str:
+    """Written notes into something a voice can read: symbols as words, no source brackets."""
+    t = re.sub(r"\((?:video|p\.|page|slide)\s*[^)]*\)|\((?:[\w-]+\.)+[a-z]{2,}\)", "", str(text or ""))
+    t = re.sub(r"(?<=\d)\s*-\s*(?=\d)", " minus ", t)
+    t = re.sub(r"(?<=\d)\s*/\s*(?=\d)", " over ", t)
+    for sym, word in _SYMBOLS:
+        t = t.replace(sym, word)
+    return re.sub(r"\s+", " ", t).strip(" ;")
+
+
+def fallback_say(action: dict) -> str:
+    """What to say for a step the model forgot to narrate: read out what it writes."""
+    op = action.get("op")
+    if op in ("note", "summary", "tag"):
+        return str(action.get("text", ""))
+    if op == "diagram":
+        nodes = [str(n) for n in action.get("nodes") or []]
+        return ". ".join(filter(None, [str(action.get("title", "")), ", then ".join(nodes)]))
+    if op == "arrow":
+        return str(action.get("label", ""))
+    return ""
 
 
 def _synthesize(text: str) -> bytes:
@@ -58,7 +88,7 @@ class Narrator(QObject):
         self._file = os.path.join(tempfile.gettempdir(), "chalktalk_voice_{}.wav")
 
     def say(self, text: str) -> None:
-        text = (text or "").strip()
+        text = spoken(text)
         if not self.enabled or not text:
             return
         self.stop()
