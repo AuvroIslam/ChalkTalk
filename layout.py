@@ -27,7 +27,7 @@ class Region:
 
 
 def _scale_line(line: Line, s: float) -> Line:
-    return Line(line.id, line.text, line.box.scaled(s), [Word(w.text, w.box.scaled(s)) for w in line.words])
+    return Line(line.id, line.text, line.box.scaled(s), [Word(w.text, w.box.scaled(s)) for w in line.words], line.kind)
 
 
 def _reading_order(lines: list[Line]) -> list[Line]:
@@ -128,6 +128,11 @@ class Scene:
     def reserve(self, b: Box, weight: float = 1.0) -> None:
         """Mark space as used by a drawing so later notes avoid it."""
         self._mark(self.reserved, b, weight)
+
+    def unreserve(self, b: Box) -> None:
+        y0, y1, x0, x1 = self._cells(b)
+        if y1 > y0 and x1 > x0:
+            self.reserved[y0:y1, x0:x1] = 0
 
     def bg_color(self, b: Box) -> tuple[float, float, float]:
         y0, y1, x0, x1 = self._cells(b.pad(CELL))
