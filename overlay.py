@@ -213,6 +213,23 @@ class Bar(QWidget):
         row.addWidget(self.reply_btn)
         outer.addLayout(row)
 
+        # Starter prompts: one click asks a typical question for what's on screen.
+        self.chips_row = QHBoxLayout()
+        self.chips_row.setSpacing(8)
+        self.chips: list[QPushButton] = []
+        for _ in range(4):
+            b = QPushButton("")
+            b.setCursor(Qt.PointingHandCursor)
+            b.setStyleSheet(
+                "QPushButton{background:#232826; color:#D4D4D8; border:1px solid #3F4A46; border-radius:14px;"
+                " padding:5px 12px; font: 14px 'Segoe UI';}"
+                f" QPushButton:hover{{border-color:{ACCENT}; color:#FFFFFF;}}")
+            b.clicked.connect(lambda _=False, btn=b: self._starter(btn.text()))
+            self.chips_row.addWidget(b)
+            self.chips.append(b)
+        self.chips_row.addStretch(1)
+        outer.addLayout(self.chips_row)
+
         QShortcut(QKeySequence(Qt.Key_Escape), self, self.cleared.emit)
         self._dots = 0
         self._thinking_text = ""
@@ -246,7 +263,7 @@ class Bar(QWidget):
         """Where the card sits (logical coords on that screen) - drawings avoid it."""
         g = screen.geometry()
         w = min(900, g.width() - 40)
-        return Box((g.width() - w) / 2, 12, w, 150)
+        return Box((g.width() - w) / 2, 12, w, 196)
 
     def _place(self, screen) -> None:
         g = screen.geometry()
@@ -269,6 +286,7 @@ class Bar(QWidget):
         self.edit.setPlaceholderText("Type a question, or press Speak… (drag on screen to select an area)")
         self.reply_btn.setText("Ask")
         self.mascot.set_mode("idle")
+        self.show_starters(True)
         self._place(screen)
         self.show()
         self.raise_()
@@ -280,6 +298,7 @@ class Bar(QWidget):
         self.edit.clear()
         self.edit.setPlaceholderText("Ask a follow-up…")
         self.reply_btn.setText("Reply")
+        self.show_starters(False)
         self.thinking(True)
         self.show()
         self.raise_()
@@ -314,3 +333,18 @@ class Bar(QWidget):
 
     def _submit(self) -> None:
         self.submitted.emit(self.edit.text())
+
+    def set_starters(self, prompts: list[str]) -> None:
+        for b, text in zip(self.chips, prompts + [""] * len(self.chips)):
+            b.setText(text)
+            b.setVisible(bool(text))
+        self._refit()
+
+    def show_starters(self, on: bool) -> None:
+        for b in self.chips:
+            b.setVisible(on and bool(b.text()))
+        self._refit()
+
+    def _starter(self, text: str) -> None:
+        self.edit.setText(text)
+        self.submitted.emit(text)

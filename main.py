@@ -31,6 +31,18 @@ from overlay import Bar, Canvas
 
 DEMO = "--demo" in sys.argv
 
+# Starter prompts in the bar, matched to what's open (updated once the source is detected).
+STARTERS = {
+    "screen": ["Explain this simply", "What does this term mean?", "Give me a real-life example",
+               "Walk me through it step by step"],
+    "youtube": ["What did they just explain?", "Explain this part simply", "Where did they first mention this?",
+                "Summarise the video so far"],
+    "document": ["Explain this page simply", "Where is this term defined?", "How does this connect to earlier pages?",
+                 "Summarise this section"],
+    "webpage": ["What's the key idea here?", "Explain this paragraph simply",
+                "What does the rest of the page say about this?", "Is this still up to date?"],
+}
+
 # Video titles and questions can contain emoji or Bangla; never let logging crash on them.
 for _s in (sys.stdout, sys.stderr):
     if _s is not None and hasattr(_s, "reconfigure"):
@@ -46,6 +58,7 @@ class Bridge(QObject):
     ready = Signal(int, object)  # generation, session
     action = Signal(int, dict)
     status = Signal(int, str)  # generation, "reading the transcript…" etc.
+    source_kind = Signal(int, str)  # generation, "youtube" / "document" / "webpage" / "screen"
     finished = Signal(int, str)  # generation, error text ("" if fine)
 
 
@@ -112,6 +125,8 @@ class App:
         self.bridge.finished.connect(self.on_finished)
         self.bridge.heard.connect(self.on_heard)
         self.bridge.status.connect(lambda g, s: g == self.gen and self.bar.say(s))
+        self.bridge.source_kind.connect(
+            lambda g, k: g == self.gen and self.canvas.mode == "ask" and self.bar.set_starters(STARTERS.get(k, STARTERS["screen"])))
         self.bar.submitted.connect(self.on_submit)
         self.bar.cleared.connect(self.on_stop)
         self.bar.speak.connect(self.on_speak)
@@ -229,6 +244,11 @@ class App:
         self.session = None
         self.ocr_job = self.pool.submit(ocr_lines, self.shot.image)  # runs while you type
         self.ctx_job = None if DEMO else self.pool.submit(context.detect, self.fg)  # so does this
+        self.bar.set_starters(STARTERS["screen"])
+        if self.ctx_job is not None:
+            g = self.gen
+            self.ctx_job.add_done_callback(lambda f: self.bridge.source_kind.emit(
+                g, (f.result().kind if not f.exception() and f.result() else "screen")))
         self.canvas.begin_ask(screen)
         self.bar.begin_ask(screen)
         if self._listen_after_capture:
