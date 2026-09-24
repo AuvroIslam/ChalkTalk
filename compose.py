@@ -167,6 +167,14 @@ class Composer:
         return self._mark(a, Frame)
 
     def _op_highlight(self, a):
+        # A marker block over a drawing hides it: ring the part instead (each part of a set
+        # on its own, since one ring around several scattered parts swallows half the figure).
+        t = a.get("target")
+        is_part = lambda x: isinstance(x, str) and x.strip().upper().startswith("P")
+        if is_part(t):
+            return self._mark(a, Circle)
+        if isinstance(t, list) and t and all(is_part(x) for x in t):
+            return [i for x in t[:4] for i in self._mark(dict(a, target=x), Circle)]
         b = self._resolve_visible(a.get("target"), a.get("phrase"))
         if b is None or self._already_marked(b):
             return []

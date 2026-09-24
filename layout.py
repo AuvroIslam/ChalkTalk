@@ -24,6 +24,12 @@ CELL = 6  # logical px per occupancy-grid cell
 class Region:
     id: str
     box: Box
+    color: str = ""  # figure parts: the ink colour ("red", "white"...), to match "the red 50 N arrow"
+
+
+# ink colour names by OpenCV hue (0-179)
+_HUES = [(8, "red"), (22, "orange"), (35, "yellow"), (85, "green"), (100, "cyan"), (130, "blue"), (150, "purple"),
+         (170, "pink"), (180, "red")]
 
 
 def _scale_line(line: Line, s: float) -> Line:
@@ -182,7 +188,8 @@ class Scene:
         the pivot, the rod, the force arrow, a hand-written "F". OCR can't name these,
         so each gets an id the tutor can point at. Photos and thumbnails are skipped."""
         inv = 1 / self.scale
-        found: list[Box] = []
+        found: list[tuple[Box, str]] = []
+        hsv = cv2.cvtColor(rgb, cv2.COLOR_RGB2HSV)
         for r in self.regions:
             if min(r.box.w, r.box.h) < 150:
                 continue  # toolbars and strips: their icons aren't a figure
@@ -198,37 +205,57 @@ class Scene:
             for ln in self.lines:  # text is already listed as lines
                 b = ln.box.pad(3).scaled(inv)
                 ink[max(0, int(b.y) - y0):max(0, int(b.y2) - y0 + 1), max(0, int(b.x) - x0):max(0, int(b.x2) - x0 + 1)] = False
-            k = max(3, int(5 * inv))
-            mask = cv2.dilate(ink.astype(np.uint8), np.ones((k, k), np.uint8))
-            n, labels, stats, _ = cv2.connectedComponentsWithStats(mask, 8)
+            # Split by ink colour first: in a multi-colour sketch each force, its arrow and its
+            # label ("F1 = 50N") share a colour, and they all touch at the object in the middle.
+            h_, s_, v_ = (hsv[y0:y1, x0:x1, c].astype(np.int16) for c in range(3))
+            names = np.full(ink.shape, "plain", dtype=object)
+            coloured = (s_ > 80) & (v_ > 80)
+            lo = 0
+            for hi, name in _HUES:
+                names[coloured & (h_ >= lo) & (h_ < hi)] = name
+                lo = hi
             ra = (x1 - x0) * (y1 - y0)
-            for i in range(1, n):
-                x, y, w, h, _a = stats[i]
-                b = Box(float(x + x0), float(y + y0), float(w), float(h)).scaled(self.scale)
-                if max(b.w, b.h) < 18 or min(b.w, b.h) < 10 and max(b.w, b.h) < 45 or w * h > 0.5 * ra:
-                    continue  # specks and dash fragments, or the frame itself
-                k = int(min(6, round((b.w + b.h) / 120)))
-                if k < 2:
-                    found.append(b)
+            for name in dict.fromkeys(names[ink].tolist()):
+                sel = ink & (names == name)
+                if sel.sum() < 30:
                     continue
-                # One long connected stroke (a rod with its pivot and the force arrow) is
-                # really several things: split it by position so each piece gets a name.
-                ys, xs = np.nonzero((labels[y:y + h, x:x + w] == i) & ink[y:y + h, x:x + w])
-                pts = np.column_stack([xs, ys]).astype(np.float32)[:: max(1, len(xs) // 4000)]
-                if len(pts) < 4 * k:
-                    found.append(b)
-                    continue
-                crit = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 1.0)
-                _, lab, _ = cv2.kmeans(pts, k, None, crit, 3, cv2.KMEANS_PP_CENTERS)
-                for c in range(k):
-                    q = pts[lab.ravel() == c]
-                    if len(q):
-                        qx, qy = q[:, 0].min(), q[:, 1].min()
-                        found.append(Box(float(x + x0 + qx), float(y + y0 + qy), float(q[:, 0].max() - qx + 1),
-                                         float(q[:, 1].max() - qy + 1)).scaled(self.scale).pad(3))
-        found = sorted(found, key=lambda b: -b.w * b.h)[:16]
-        found.sort(key=lambda b: (round(b.y / 40), b.x))
-        return [Region(f"P{i + 1}", b) for i, b in enumerate(found)]
+                label = ("white" if bg.mean() < 110 else "black") if name == "plain" else name
+                found += [(b, label) for b in self._stroke_parts(sel, x0, y0, ra, inv)]
+        found = sorted(found, key=lambda f: -f[0].w * f[0].h)[:20]
+        found.sort(key=lambda f: (round(f[0].y / 40), f[0].x))
+        return [Region(f"P{i + 1}", b, c) for i, (b, c) in enumerate(found)]
+
+    def _stroke_parts(self, ink: np.ndarray, x0: int, y0: int, ra: int, inv: float) -> list[Box]:
+        """Connected marks of one colour; a long stroke is split by position into pieces."""
+        k = max(3, int(7 * inv))  # joins the letters of a label and the label to its arrow
+        mask = cv2.dilate(ink.astype(np.uint8), np.ones((k, k), np.uint8))
+        n, labels, stats, _ = cv2.connectedComponentsWithStats(mask, 8)
+        out: list[Box] = []
+        for i in range(1, n):
+            x, y, w, h, _a = stats[i]
+            b = Box(float(x + x0), float(y + y0), float(w), float(h)).scaled(self.scale)
+            if max(b.w, b.h) < 18 or min(b.w, b.h) < 10 and max(b.w, b.h) < 45 or w * h > 0.5 * ra:
+                continue  # specks and dash fragments, or the frame itself
+            k = int(min(6, round((b.w + b.h) / 120)))
+            if k < 2:
+                out.append(b)
+                continue
+            # One long connected stroke (a rod with its pivot and the force arrow) is
+            # really several things: split it by position so each piece gets a name.
+            ys, xs = np.nonzero((labels[y:y + h, x:x + w] == i) & ink[y:y + h, x:x + w])
+            pts = np.column_stack([xs, ys]).astype(np.float32)[:: max(1, len(xs) // 4000)]
+            if len(pts) < 4 * k:
+                out.append(b)
+                continue
+            crit = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 1.0)
+            _, lab, _ = cv2.kmeans(pts, k, None, crit, 3, cv2.KMEANS_PP_CENTERS)
+            for c in range(k):
+                q = pts[lab.ravel() == c]
+                if len(q):
+                    qx, qy = q[:, 0].min(), q[:, 1].min()
+                    out.append(Box(float(x + x0 + qx), float(y + y0 + qy), float(q[:, 0].max() - qx + 1),
+                                   float(q[:, 1].max() - qy + 1)).scaled(self.scale).pad(3))
+        return out
 
     # ---- the model's view -------------------------------------------------
 
