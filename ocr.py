@@ -148,22 +148,23 @@ def recover_small_text(img: Image.Image, lines: list[Line]) -> list[Line]:
     # (Symbols like "#" or "," as separators make Windows OCR return nothing at all.)
     from PIL import ImageDraw, ImageFont, ImageOps
 
-    th, pad, sp = 56, 4, 16
-    SEP = "is"
-    font = ImageFont.truetype("arial.ttf", int(th * 0.8))
-    hash_w = int(ImageDraw.Draw(Image.new("L", (1, 1))).textlength(SEP, font=font))
-    crops = []
+    pad, sp, SEP = 4, 16, "is"
+    gray_img = img.convert("L")
+    raw = []
     for t in tokens:
-        c = img.convert("L").crop((int(t.x) - pad, int(t.y) - pad, int(t.x2) + pad, int(t.y2) + pad))
-        c = c.resize((max(1, int(c.width * th / c.height)), th), Image.LANCZOS)
-        crops.append(ImageOps.invert(c) if dark_bg else c)
+        c = gray_img.crop((int(t.x) - pad, int(t.y) - pad, int(t.x2) + pad, int(t.y2) + pad))
+        raw.append(ImageOps.invert(c) if dark_bg else c)
     found: dict[int, str] = {}
-    # Two passes: tokens missed the first time get a second sheet of their own.
-    for pass_tokens in (list(range(len(crops))), None):
-        todo = pass_tokens if pass_tokens is not None else [k for k in range(len(crops)) if k not in found]
+    # Windows OCR drops a whole row now and then depending on glyph size, so tokens it
+    # missed get another sheet of their own at a different size.
+    for th in (42, 32, 56):
+        todo = [k for k in range(len(raw)) if k not in found]
         if not todo:
             break
-        found.update(_read_sheet(crops, todo, th, sp, SEP, font, hash_w))
+        font = ImageFont.truetype("arial.ttf", int(th * 0.8))
+        sep_w = int(ImageDraw.Draw(Image.new("L", (1, 1))).textlength(SEP, font=font))
+        crops = {k: raw[k].resize((max(1, int(raw[k].width * th / raw[k].height)), th), Image.LANCZOS) for k in todo}
+        found.update(_read_sheet(crops, todo, th, sp, SEP, font, sep_w))
     circles = _circles(gray)
     out = []
     for k, text in found.items():
@@ -179,6 +180,16 @@ def recover_small_text(img: Image.Image, lines: list[Line]) -> list[Line]:
         if not in_circle and text in ("I", "l", "|", "i"):
             text = "1"  # a lone stroke outside a node is the digit one (an edge weight)
         out.append(Line(id="", text=text, box=box, words=[Word(text, box)], kind="node" if in_circle else ""))
+    # Node labels read one by one lose case and I/1, O/0: decide from the graph as a whole.
+    nodes = [l for l in out if l.kind == "node"]
+    numbered = sum(l.text.isdigit() for l in nodes) > len(nodes) / 2
+    for l in nodes:
+        t = l.text
+        if numbered:
+            t = t.translate(str.maketrans({"I": "1", "l": "1", "|": "1", "i": "1", "O": "0", "o": "0"}))
+        elif len(t) == 1 and t.isalpha():
+            t = t.upper()
+        l.text, l.words = t, [Word(t, l.box)]
     return out
 
 
@@ -190,12 +201,13 @@ def _read_sheet(crops, todo, th, sp, SEP, font, sep_w) -> dict[int, str]:
     rows = [todo[i:i + per_row] for i in range(0, len(todo), per_row)]
     hash_w = sep_w
     row_h = th + 60
-    sheet_w = 40 + max(sum(crops[k].width + 2 * sp + hash_w for k in r) for r in rows) + hash_w + 40
-    sheet = Image.new("L", (sheet_w, row_h * len(rows) + 40), 255)
+    m = 100  # white margins: Windows OCR can drop a line that hugs the image edge
+    sheet_w = m + max(sum(crops[k].width + 2 * sp + hash_w for k in r) for r in rows) + hash_w + m
+    sheet = Image.new("L", (sheet_w, row_h * len(rows) + 2 * m), 255)
     d = ImageDraw.Draw(sheet)
     cells: dict[int, tuple[int, int, int, int]] = {}  # token -> where it sits on the sheet
     for ri, r in enumerate(rows):
-        x, y = 40, 30 + ri * row_h
+        x, y = m, m + ri * row_h
         for k in r:
             d.text((x, y + th * 0.08), SEP, font=font, fill=0)
             x += hash_w + sp

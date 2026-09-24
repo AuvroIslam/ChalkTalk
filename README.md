@@ -74,6 +74,7 @@ The console logs every decision, e.g. `context check (2.6s): NOT enough - …` f
 python -m pytest tests/test_offline.py -q   # 32 tests: placement, DPI, colours, parser, typed tools, PDF/PPTX/DOCX, detection
 python -m pytest tests/test_network.py -q   # YouTube, Firecrawl, a real Chrome window
 python tests/eval_model.py                  # 10 real-model scenarios: right context decision, drawings land, facts, citations, language, speed
+python tests/eval_walkthroughs.py out_dir   # new graphs (letters, numbers, dark), BFS, sorting, algebra: graded against the true answer
 python tests/live_e2e.py out_dir            # real Chrome windows (YouTube, local PDF, Wikipedia) end to end, with screenshots
 ```
 
