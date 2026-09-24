@@ -7,7 +7,7 @@
 <p align="center"><strong>Draws on your screen and guides you step by step.</strong></p>
 
 <p align="center">
-  <a href="docs/ChalkTalk_Dijkstra_Demo.mp4"><strong>Watch the demo →</strong></a>
+  <a href="https://drive.google.com/file/d/1tyDAC3urIA2XVTGFPTeudc7vWEQE5GWY/view?usp=sharing"><strong>Watch the demo →</strong></a>
   &nbsp;·&nbsp;
   <a href="#running-it">Run it locally</a>
   &nbsp;·&nbsp;
@@ -15,11 +15,11 @@
 </p>
 
 <p align="center">
-  <a href="docs/ChalkTalk_Dijkstra_Demo.mp4">
-    <img src="docs/pitch-deck/1.png" width="880" alt="ChalkTalk: draws on your screen and guides you step by step. A live Dijkstra lesson drawn on a lecture slide." />
+  <a href="https://drive.google.com/file/d/1tyDAC3urIA2XVTGFPTeudc7vWEQE5GWY/view?usp=sharing">
+    <img src="docs/screenshots/00-demo-thumbnail.png" width="880" alt="Watch the ChalkTalk demo video: it runs Dijkstra live on a lecture slide" />
   </a>
   <br />
-  <sub><em>▶ A real frame from the demo: ChalkTalk ran Dijkstra on a lecture slide and drew the answer, A → I → E.</em></sub>
+  <sub><em>▶ Watch the demo: ChalkTalk runs Dijkstra live on a lecture slide, drawing and explaining every step.</em></sub>
 </p>
 
 <br />
@@ -51,6 +51,10 @@ Before building anything, I looked at what already exists. Copilot can see your 
 ---
 
 ## What ChalkTalk does
+
+<p align="center">
+  <img src="docs/pitch-deck/1.png" width="820" alt="ChalkTalk: draws on your screen and guides you step by step" />
+</p>
 
 Press one hotkey over anything (a slide, a PDF, a YouTube lecture, code, a web page), then type or say your question. ChalkTalk:
 
@@ -153,7 +157,7 @@ Testing is what caught the real problems. On a real PDF in the browser, ChalkTal
 <p align="center">
   <img src="docs/pitch-deck/9.png" width="820" alt="Demo: ChalkTalk runs Dijkstra live, on the slide" />
   <br />
-  <sub><em><a href="docs/ChalkTalk_Dijkstra_Demo.mp4">▶ Watch the full recording</a>: a real PDF, drawn and spoken live, on Microsoft Foundry.</em></sub>
+  <sub><em><a href="https://drive.google.com/file/d/1tyDAC3urIA2XVTGFPTeudc7vWEQE5GWY/view?usp=sharing">▶ Watch the demo video</a> (or <a href="docs/ChalkTalk_Dijkstra_Demo.mp4">the raw recording</a>): a real PDF, drawn and spoken live, on Microsoft Foundry.</em></sub>
 </p>
 
 ---
