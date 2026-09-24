@@ -67,13 +67,15 @@ HOW TO TEACH
 - Teach ON the picture. When the screen shows a figure, diagram, video frame, chart or formula, point at its actual parts (the pivot, the force arrow, the distance r, a curve, each symbol of the formula) and explain each one there. Use the FIGURE PARTS (P ids) or lines inside the figure; a {"box"} only if neither covers it. Several parts that form one thing (a rod drawn in pieces) can be a set: ["P4","P6"]. Only add a "diagram" if the picture you need isn't on screen.
 - A mark or pointer must land on the thing it explains. A title, heading or caption that merely contains the same word is not that thing: never point at it instead of the figure.
 - To explain a formula: mark each symbol, say what it stands for and how changing it changes the result, then give one everyday example.
+- "What is happening here?" / "I'm confused": teach THIS example like a teacher at the board, in order, simply: 1) what the situation is (the object, what it's made of or weighs); 2) the things acting on it, one by one, with their real values read from the screen ("this 50 N pushes right"); 3) what is being worked out and why; 4) the result, using the actual numbers on screen. No general advice ("identify each force...") in place of the actual example. One idea per step, everyday words.
+- Only name what you can actually read. Check colours, labels and numbers in the ZOOM image before saying what a mark is; if you can't tell what something is, don't mention it.
 - Notes: at most 15 words, plain language, an analogy or a concrete example when possible. Never just restate the screen.
 - Notes explain the idea itself. Never narrate what you are doing ("I'll open...", "Let me...").
 - Never speculate about what you cannot see or know (what someone said or likely said, private details). Explain what is visible instead.
 - Every note that uses fetched context ends with its source in brackets: "(video 3:12)", "(p. 14)", "(slide 5)", "(Wikipedia)".
-- Usually 3 to 8 actions (walkthroughs: as many steps as they need, max 30). Don't cover the whole screen.
+- Usually 3 to 8 actions; teaching a whole example to a confused learner up to 11, always ending with the summary (walkthroughs: as many steps as they need, max 30). Don't cover the whole screen.
 - Use only ids from the lists. Don't place notes yourself.
-- Write every note, label and caption in the language of the user's question (a Bangla question gets Bangla notes), even when the screen is in English."""
+- LANGUAGE: every note, tag, label, caption, summary and "say" is in the language of the user's question (a Bangla question gets Bangla notes and Bangla "say"), even when the screen is in English."""
 
 
 # Added to the question only when the user asks to be walked through something.
@@ -133,12 +135,23 @@ def _elements(scene: Scene) -> str:
         kind = " (node)" if ln.kind == "node" else ""  # a label inside a drawn circle, e.g. a graph vertex
         rows.append(f"{ln.id} {scene.to_model(ln.box)} {json.dumps(text, ensure_ascii=False)}{kind}")
     regs = [f"{r.id} {scene.to_model(r.box)}" for r in scene.visible_regions()]
-    parts = [f"{p.id} {scene.to_model(p.box)}" for p in scene.visible_parts()]
+    parts = [f"{p.id} {scene.to_model(p.box)} {p.color}".rstrip() for p in scene.visible_parts()]
     out = "TEXT LINES\n" + ("\n".join(rows) or "(none)") + "\n\nREGIONS\n" + ("\n".join(regs) or "(none)")
     if parts:
         out += ("\n\nFIGURE PARTS (marks inside drawings, labelled P1, P2... in yellow on the screenshot; "
                 "point at the part you explain, e.g. the pivot, an arrow, a curve, a hand-written symbol)\n" + "\n".join(parts))
     return out
+
+
+def _main_drawing(scene: Scene) -> Box | None:
+    """The region holding most of the figure parts (e.g. the video frame with the sketch)."""
+    parts = scene.visible_parts()
+    best, n_best = None, 0
+    for r in scene.visible_regions():
+        n = sum(r.box.x <= p.box.cx <= r.box.x2 and r.box.y <= p.box.cy <= r.box.y2 for p in parts)
+        if n > n_best or n == n_best and best is not None and r.box.w * r.box.h < best.w * best.h:
+            best, n_best = r.box, n
+    return best if n_best >= 2 else None
 
 
 def _label_parts(crop, scene: Scene, view: Box):
@@ -200,7 +213,7 @@ NOT enough when:
 - it asks about current or recent facts: latest versions, what docs recommend today, prices, news, schedules;
 - the answer would otherwise be a guess.
 Otherwise it IS enough. Don't request lookups just to be thorough: speed matters.
-Asking to explain, simplify, give an example of, or walk through what is visible is ALWAYS enough.
+Asking to explain, simplify, give an example of, or walk through what is visible is ALWAYS enough. So is "what is happening here?", "explain this", "I'm confused": "here" and "this" mean what is on screen right now, which the tutor can see.
 Running or tracing something drawn on screen (a graph, an equation, code, a diagram, a table) is ALWAYS enough: the tutor reads the picture itself (which edge a weight belongs to, how things connect).
 
 If not enough: "missing" says in a few words what is missing, and "lookups" lists at most 3 lookups using only the listed tools, with exact arguments (unused fields null). For read_webpage and every search, put what to look for in "query". If enough: "missing" is "" and "lookups" is [].
@@ -274,8 +287,23 @@ class Session:
         view = selection if selection is not None else Box(0, 0, scene.w, scene.h)
         s = 1 / scene.scale
         crop = image.crop((round(view.x * s), round(view.y * s), round(view.x2 * s), round(view.y2 * s)))
-        self.b64, pw, ph = _encode(_label_parts(crop, scene, view))
+        labelled = _label_parts(crop, scene, view)
+        self.b64, pw, ph = _encode(labelled)
         scene.set_view(view, pw, ph)
+        # Hand-written numbers in a drawing are tiny once the whole screen is shrunk for
+        # the model: also send the drawing itself, zoomed, so it reads them right.
+        self.zoom_b64, self.zoom_note = None, ""
+        fig = _main_drawing(scene)
+        # A drawing that fills the screen (a chalk video, a whiteboard) is what the lesson is
+        # about: look closer (zoom + more reasoning). A small chart on a text slide doesn't need it.
+        self.drawing_lesson = fig is not None and fig.w * fig.h >= 0.25 * view.w * view.h
+        if self.drawing_lesson and fig.w * fig.h < 0.7 * view.w * view.h:
+            z = crop.crop((round((fig.x - view.x) * s), round((fig.y - view.y) * s),
+                           round((fig.x2 - view.x) * s), round((fig.y2 - view.y) * s)))
+            self.zoom_b64 = _encode(z)[0]
+            self.zoom_note = (f"\n\nZOOM: the second image is the drawing at {scene.to_model(fig)} enlarged and without "
+                              f"labels. Read values, symbols and colours there; point using the P/L ids from the "
+                              f"first image (or boxes in first-image pixels).")
 
     def cancel(self) -> None:
         self._cancel.set()
@@ -312,10 +340,14 @@ class Session:
             self.context_text = self._context_text()
             self.toolbox = Toolbox(self.source)
             content = [
-                {"type": "text", "text": f"{_elements(self.scene)}\n\n{self.context_text}\n\nUSER QUESTION\n{question}{mode}"},
+                {"type": "text", "text": f"{_elements(self.scene)}\n\n{self.context_text}{self.zoom_note}"
+                                         f"\n\nUSER QUESTION\n{question}{mode}"},
                 {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{self.b64}",
                                                     "detail": config.IMAGE_DETAIL}},
             ]
+            if self.zoom_b64:
+                content.append({"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{self.zoom_b64}",
+                                                                   "detail": "high"}})
         else:
             content = "FOLLOW-UP QUESTION (same screen; earlier drawings were cleared)\n" + question + mode
         self.messages.append({"role": "user", "content": content})
@@ -332,7 +364,7 @@ class Session:
                                              or (self._walkthrough and round_no == 0),
                                              on_action=on_action, gate=gate,
                                              # a walkthrough, or a drawing to point into, needs a closer look
-                                             reasoning=("low" if self._walkthrough or self.scene.visible_parts()
+                                             reasoning=("low" if self._walkthrough or self.drawing_lesson
                                                         else config.REASONING) if round_no == 0
                                              else config.AFTER_LOOKUP_REASONING)
             self._must_answer = False
@@ -372,6 +404,9 @@ class Session:
         tools = "\n".join(f"- {name}({', '.join(f for f in m.model_fields if f != 'reason')}): {(m.__doc__ or '').strip()}"
                           for name, m in self.toolbox.models.items())
         screen = "\n".join(l.text for l in self.scene.visible_lines())[:6000]
+        if self.scene.visible_parts():  # hand-drawn marks that OCR can't turn into text
+            screen += ("\n[The screen also shows a drawing (a sketch, diagram or video frame with hand-written "
+                       "labels and values). The tutor sees it; it isn't in this text.]")
         kwargs = dict(model=config.MODEL, max_completion_tokens=3000, response_format=model, messages=[
             {"role": "system", "content": JUDGE},
             {"role": "user", "content": f"AVAILABLE TOOLS\n{tools}\n\nSCREEN TEXT\n{screen}\n\n{self.context_text}"
@@ -476,7 +511,7 @@ class Session:
                     for action in parser.feed(delta.content):
                         key = json.dumps({k: action.get(k) for k in ("op", "target", "phrase", "from", "to", "text")},
                                          sort_keys=True)
-                        if key not in seen and len(seen) < (32 if self._walkthrough else 9):
+                        if key not in seen and len(seen) < (32 if self._walkthrough else 12):
                             seen.add(key)
                             (on_action if state else held.append)(action)
                 for tc in delta.tool_calls or []:

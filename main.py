@@ -436,6 +436,8 @@ class App:
         else:
             print(f"  not drawn: {action.get('op')} {action.get('target', '')}{action.get('from', '')}"
                   f"{'->' + str(action.get('to')) if action.get('to') else ''} (not found, hidden or a repeat)")
+            if action.get("say"):  # the mark couldn't be drawn, but the explanation still belongs in the lesson
+                self.canvas.add_step([], action.get("say"))
 
     def on_step(self, say: str):
         self.bar.say(say)
