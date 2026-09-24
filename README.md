@@ -88,6 +88,8 @@ python tests/live_e2e.py out_dir            # real Chrome windows (YouTube, loca
 
 **2. Drawing in the right place**
 - The model never guesses pixels. Windows OCR measures every line and word, and the model points at them by id, phrase or figure region.
+- Drawings with no text in them (a chalk sketch in a video, a diagram) are split into their marks: the pivot, the rod, the force arrow, a hand-written "F". Each mark gets an id (P1, P2…) that is written beside it on the model's copy of the screen, so it can point at "the pivot" and not at a title that happens to say "lever arm".
+- No random lines: arrows need two separate things and a label saying how they relate (at most 2 per answer). A note that can't sit near its target is linked to it by a matching number (①) instead of a pointer across the screen.
 - Correct on 100% to 300% display scaling and on multiple monitors.
 
 **3. Readable writing**

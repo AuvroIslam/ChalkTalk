@@ -30,7 +30,9 @@ CASES = [
     ("pdf", f"file:///{PDF}", ".pdf", "How are entries judged? What are the criteria and points?", False),
     ("web", "https://en.wikipedia.org/wiki/Gradient_descent", "Gradient descent",
      "What variants of this method does the article list further down?", False),
-    ("dijkstra", "file:///" + (Path(__file__).resolve().parents[2] / "dijkstra-slides.pdf").as_posix() + "#page=3",
+    ("torque", "https://www.youtube.com/watch?v=jg4e8W44_E4&t=150s", "YouTube",
+     "explain torque here, can understand the visualization here", True),
+    ("dijkstra","file:///" + (Path(__file__).resolve().parents[2] / "dijkstra-slides.pdf").as_posix() + "#page=3",
      "dijkstra|Slide 1", "explain the dijkstra live, show how can I reach from A to E", False),
 ]
 if len(sys.argv) > 2:  # run only the named cases: live_e2e.py OUT dijkstra slide
@@ -113,6 +115,18 @@ def main():
         wait_until_taught()
 
     chalk_app.bridge.finished.connect(finished)
+
+    def log_action(g, a):  # what each step points at and says, to check it lands on the right thing
+        sc = chalk_app.composer.scene if chalk_app.composer else None
+        where = ""
+        if sc is not None and a.get("target") is not None and not isinstance(a.get("target"), list):
+            b = sc.resolve(a.get("target"), a.get("phrase"))
+            ln = sc.line_by_id.get(str(a.get("target")).upper())
+            where = f" -> {ln.text[:40]!r}" if ln else (f" -> box {[round(v) for v in (b.x, b.y, b.w, b.h)]}" if b else " -> ?")
+        print(f"  [{a.get('op')}] {str(a.get('text') or a.get('title') or a.get('label') or '')[:60]!r}{where}"
+              f" | say: {str(a.get('say') or '(none)')[:70]}")
+
+    chalk_app.bridge.action.connect(log_action)
 
     def next_case():
         if not queue:

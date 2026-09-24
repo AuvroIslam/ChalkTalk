@@ -223,8 +223,58 @@ def test_nothing_marked_under_the_bar_and_no_deferring_labels(qapp, slide, slide
     c = Composer(s)
     assert not c.build({"op": "circle", "target": title.id})           # the user couldn't see it
     assert c.build({"op": "circle", "target": "L3", "phrase": "learning rate"})
-    items = c.build({"op": "arrow", "from": "L3", "to": "L6", "label": "see the section below"})
-    assert len(items) == 1                                               # arrow kept, deferring label dropped
+    # an arrow whose only label defers ("see the section below") says nothing: not drawn
+    assert c.build({"op": "arrow", "from": "L3", "to": "L6", "label": "see the section below"}) == []
+
+
+def test_no_random_arrows_and_far_notes_get_numbers(qapp, slide, slide_lines):
+    from compose import Composer
+    from items import Arrow, Badge, Note
+    from layout import Scene
+
+    c = Composer(Scene(slide, slide_lines, 1.0))
+    assert c.build({"op": "arrow", "from": "L3", "to": "L6"}) == []                    # no label: no meaning
+    assert c.build({"op": "arrow", "from": "L3", "to": "L3", "label": "is"}) == []     # onto itself
+    assert any(isinstance(i, Arrow) for i in c.build({"op": "arrow", "from": "L3", "to": "L6", "label": "leads to"}))
+    assert any(isinstance(i, Arrow) for i in c.build({"op": "arrow", "from": "L4", "to": "L6", "label": "feeds"}))
+    assert c.build({"op": "arrow", "from": "L5", "to": "L6", "label": "then"}) == []   # at most 2 per answer
+    # a note that can only be placed far away is linked by a number, not a line across the screen
+    c.scene.reserve(c.scene.view, 1.0)
+    items = c._op_note({"target": "L3", "text": "A long explanation that needs room " * 3})
+    note = next(i for i in items if isinstance(i, Note))
+    if c._too_far(note.box, c.scene.resolve("L3")):
+        assert note.leader is None and sum(isinstance(i, Badge) for i in items) == 2
+
+
+def test_figure_parts_and_no_jumping_to_the_title(qapp):
+    """A drawing with no text in it (a lever, a pivot, a force arrow, a hand-written F):
+    its marks become parts P1.. the tutor can point at, and a phrase that isn't in the
+    part must not send the mark off to the same words in the page title."""
+    from PIL import ImageDraw, ImageFont
+    from layout import Scene
+    from ocr import ocr_lines
+
+    img = Image.new("RGB", (1600, 1000), "white")
+    d = ImageDraw.Draw(img)
+    d.rectangle((60, 60, 1100, 760), fill="black")
+    d.ellipse((150, 330, 210, 390), outline="white", width=5)                   # pivot
+    d.rectangle((210, 345, 700, 375), outline="white", width=5)                 # rod
+    d.line((690, 380, 820, 600), fill="white", width=5)                         # force arrow
+    d.text((840, 580), "F", font=ImageFont.truetype("arial.ttf", 60), fill="white")
+    d.text((60, 820), "Torque, Lever Arm, Moment of Force", font=ImageFont.truetype("arialbd.ttf", 48), fill="black")
+    s = Scene(img, ocr_lines(img), 1.0)
+    assert len(s.parts) >= 2
+    pivot = min(s.parts, key=lambda p: abs(p.box.cx - 180) + abs(p.box.cy - 360))
+    b = s.resolve(pivot.id, "lever arm")
+    assert b is not None and b.y2 < 800                                          # stayed on the drawing
+
+
+def test_every_step_can_be_spoken():
+    from narrator import fallback_say, spoken
+
+    assert fallback_say({"op": "note", "text": "τ = F × r⊥ (video 2:22)"}) and fallback_say({"op": "circle"}) == ""
+    assert spoken("τ = F × r⊥ (video 2:22)") == "tau equals F times r perpendicular"
+    assert spoken("d=∞") == "d equals infinity"
 
 
 def test_graph_nodes_are_recovered_and_summary_path_is_traced(qapp):

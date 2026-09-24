@@ -94,6 +94,8 @@ class Composer:
         self.tag_text: dict[tuple[int, int], str] = {}
         self.tag_font = _font(config.NOTE_FONT_PX, True, "Segoe UI")
         self.max_note_w = min(300.0, scene.w * 0.3)
+        self.arrows = 0  # arrows drawn so far (at most 2: more reads as noise)
+        self.refs = 0    # numbered links between a far-away note and its target
 
     # -- helpers -------------------------------------------------------------
 
@@ -185,13 +187,22 @@ class Composer:
         e = self._resolve_visible(a.get("to"), a.get("to_phrase"))
         if s is None or e is None:
             return []
+        label = a.get("label")
+        if isinstance(label, str) and _DEFERS.search(label):
+            label = None  # "see the section below" answers nothing
+        # An arrow has to mean something: two separate things, joined by a stated relation,
+        # close enough to read as one idea. Anything else is just a random line on the screen.
+        ix = max(0.0, min(s.x2, e.x2) - max(s.x, e.x)) * max(0.0, min(s.y2, e.y2) - max(s.y, e.y))
+        length = math.hypot(e.cx - s.cx, e.cy - s.cy)
+        if (not (isinstance(label, str) and label.strip()) or self.arrows >= 2
+                or ix > 0.3 * min(s.w * s.h, e.w * e.h) or length > 0.45 * math.hypot(self.scene.w, self.scene.h)):
+            self.skipped_duplicates += 1
+            return []
+        self.arrows += 1
         ink = self.scene.ink(self._ink_name(a), s.union(e))
         p0 = _edge_point(s, _center(e), 6)
         p1 = _edge_point(e, _center(s), 6)
         items: list[Item] = [Arrow(p0, p1, ink)]
-        label = a.get("label")
-        if isinstance(label, str) and _DEFERS.search(label):
-            label = None  # "see the section below" answers nothing: keep the arrow, drop the label
         if isinstance(label, str) and label.strip():
             fm = QFontMetricsF(self.small_font)
             top, _, bottom = _metrics(fm)
@@ -226,6 +237,9 @@ class Composer:
             return self._op_note(dict(a, op="note"))
         key = (round(b.cx / 8), round(b.cy / 8))
         old = self.tags.get(key)
+        if old is not None and text.replace(" ", "") in ("∞", "d=∞"):
+            self.skipped_duplicates += 1
+            return []  # "every other node starts at infinity" never overwrites a value already found
         if old is not None and self.tag_text.get(key, "").replace(" ", "") == text.replace(" ", ""):
             self.skipped_duplicates += 1
             return []  # same value again: nothing to correct
@@ -256,21 +270,34 @@ class Composer:
         ink = self._ink_on_card(name, card) if card else self.scene.ink(name, box)
         return Note(box, lines, font, line_h, top, ink, card, self._halo(box), self._leader(box, target), pad)
 
+    def _gap(self, box: Box, target: Box) -> float:
+        return max(0.0, max(target.x - box.x2, box.x - target.x2), max(target.y - box.y2, box.y - target.y2))
+
     def _leader(self, box: Box, target: Box | None):
-        if target is None:
-            return None
-        gap = max(0.0, max(target.x - box.x2, box.x - target.x2), max(target.y - box.y2, box.y - target.y2))
-        if gap <= 14:
+        if target is None or self._gap(box, target) <= 14 or self._too_far(box, target):
             return None
         _, p, q = self.scene.leader(box, target)
         return QPointF(*p), QPointF(*q)
+
+    def _too_far(self, box: Box, target: Box) -> bool:
+        """A pointer this long would cut across the screen and read as a random line."""
+        return self._gap(box, target) > max(160.0, 0.14 * self.scene.w)
 
     def _op_note(self, a):
         text = str(a.get("text", "")).strip()
         if not text:
             return []
         target = self.scene.resolve(a.get("target"), a.get("phrase")) if a.get("target") or a.get("phrase") else None
-        return [self._note(text, target, self._ink_name(a), self.note_font)]
+        note = self._note(text, target, self._ink_name(a), self.note_font)
+        if target is None or not self._too_far(note.box, target):
+            return [note]
+        # Far from what it explains: link them with the same number, like ① in a textbook.
+        self.refs += 1
+        n, ink = str(self.refs), note.ink
+        t = QPointF(target.x - 14, target.y - 10) if target.x > 20 else QPointF(target.x2 + 14, target.y - 10)
+        self.scene.reserve(Box(t.x() - 13, t.y() - 13, 26, 26), 1.0)
+        return [Badge(t, n, self.scene.ink(self._ink_name(a), target), self.badge_font),
+                note, Badge(QPointF(note.box.x - 6, note.box.y - 6), n, ink, self.badge_font)]
 
     def _op_summary(self, a):
         text = str(a.get("text", "")).strip()
@@ -403,7 +430,10 @@ class Composer:
         # nodes first, then the arrows between them, so the idea builds up step by step
         parts += node_items + edge_items
         leader_items: list[Item] = []
-        lead = self._leader(box, target)
+        # A pointer only to something specific: one aimed at a whole figure or half the
+        # screen points at nothing in particular and reads as a random arrow.
+        specific = target is not None and target.w * target.h < 0.05 * self.scene.w * self.scene.h
+        lead = self._leader(box, target) if specific else None
         if lead is not None:
             leader_items.append(Arrow(lead[0], lead[1], ink, 0.12, 2.0))
         return [Group(leader_items + parts, box, card, ink)]
