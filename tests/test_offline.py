@@ -1,6 +1,7 @@
 """Fast tests with no network and no model. Run: python -m pytest tests/test_offline.py -q"""
 import http.server
 import json
+import math
 import threading
 from functools import partial
 
@@ -267,6 +268,45 @@ def test_figure_parts_and_no_jumping_to_the_title(qapp):
     pivot = min(s.parts, key=lambda p: abs(p.box.cx - 180) + abs(p.box.cy - 360))
     b = s.resolve(pivot.id, "lever arm")
     assert b is not None and b.y2 < 800                                          # stayed on the drawing
+
+
+def test_numbering_forces_by_description(qapp):
+    """A force diagram in colours: arrows from one object, each with its label. Asked for
+    "the red arrow pointing right" (or a wrong id, with the colour in the words), the number
+    must go just past THAT arrow's head, and no two numbers may overlap."""
+    from PIL import ImageDraw, ImageFont
+    from compose import Composer
+    from items import Badge
+    from layout import Scene
+    from ocr import ocr_lines
+
+    img = Image.new("RGB", (1600, 1000), "black")
+    d = ImageDraw.Draw(img)
+    d.rectangle((40, 40, 1560, 960), fill=(8, 8, 8))
+    c = (800, 500)
+    d.ellipse((c[0] - 50, c[1] - 45, c[0] + 50, c[1] + 45), fill=(250, 200, 160))    # the object
+    arrows = {"red": ((255, 40, 40), (1150, 500)), "cyan": ((40, 220, 240), (430, 500)),
+              "yellow": ((250, 230, 40), (800, 180)), "purple": ((180, 60, 230), (800, 820))}
+    f = ImageFont.truetype("arial.ttf", 34)
+    for name, (col, end) in arrows.items():
+        d.line([c, end], fill=col, width=6)
+        d.text((end[0] + 10, end[1] - 50), f"{name[:1].upper()} = 5N", font=f, fill=col)
+    s = Scene(img, ocr_lines(img), 1.0)
+    comp = Composer(s)
+    badges = []
+    for n, (ink, points) in enumerate([("red", "right"), ("teal", "left"), ("yellow", "up"), ("violet", "down")], 1):
+        items = comp.build({"op": "number", "n": n, "target": {"ink": ink, "points": points}})
+        badges += [i for i in items if isinstance(i, Badge)]
+    ends = [arrows[k][1] for k in ("red", "cyan", "yellow", "purple")]
+    for b, (ex, ey) in zip(badges, ends):
+        assert math.hypot(b.c.x() - ex, b.c.y() - ey) < 70, (b.n, b.c, (ex, ey))       # at its own arrowhead
+    assert all(math.hypot(a.c.x() - b.c.x(), a.c.y() - b.c.y()) >= 26 for a in badges for b in badges if a is not b)
+    # a wrong id, but the words say which arrow: the number still goes on the red one
+    comp2 = Composer(s)
+    wrong = next(p.id for p in s.parts if p.hue is not None and not (p.hue < 10 or p.hue > 165))
+    b = [i for i in comp2.build({"op": "number", "n": 1, "target": wrong,
+                                 "say": "Force one: the red arrow, pushing to the right."}) if isinstance(i, Badge)][0]
+    assert math.hypot(b.c.x() - 1150, b.c.y() - 500) < 70
 
 
 def test_every_step_can_be_spoken():

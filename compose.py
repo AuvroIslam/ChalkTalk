@@ -21,6 +21,18 @@ LIGHT_CARD, DARK_CARD = "#FFF6BF", "#1E2A3A"
 INKS_STRONG = "#E11D48"  # the final answer path
 _DEFERS = re.compile(r"(?i)\b(see|look (at|for)|check|refer to|scroll)\b.*\b(section|page|below|above|article|link)\b")
 
+# Colour and direction words in what the tutor says about a mark ("the cyan 40 N pull to the left").
+_INK_WORDS = ["light blue", "sky blue", "red", "crimson", "orange", "brown", "peach", "yellow", "gold", "lime", "green",
+              "teal", "cyan", "aqua", "turquoise", "blue", "navy", "indigo", "violet", "purple", "lavender", "magenta",
+              "pink", "fuchsia"]
+_DIR_NAMES = ["up-left", "up-right", "down-left", "down-right", "right", "left", "up", "down"]
+# Only clear phrases count: bare "up" / "right" are everywhere ("add up", "that's right").
+_DIR_WORDS = re.compile(
+    r"\b(up(?:ward)? and (?:to the )?left|up-left|upper[- ]left)\b|\b(up(?:ward)? and (?:to the )?right|up-right|upper[- ]right)\b"
+    r"|\b(down(?:ward)? and (?:to the )?left|down-left|lower[- ]left)\b|\b(down(?:ward)? and (?:to the )?right|down-right|lower[- ]right)\b"
+    r"|\b(to the right|rightwards?|point(?:s|ing)? right|right-pointing)\b|\b(to the left|leftwards?|point(?:s|ing)? left|left-pointing)\b"
+    r"|\b(upwards?|point(?:s|ing)? up|straight up|up-pointing)\b|\b(downwards?|point(?:s|ing)? down|straight down|down-pointing)\b")
+
 
 def _font(px: int, bold: bool = False, family: str | None = None) -> QFont:
     f = QFont(family or config.NOTE_FONT)
@@ -96,6 +108,8 @@ class Composer:
         self.max_note_w = min(300.0, scene.w * 0.3)
         self.arrows = 0  # arrows drawn so far (at most 2: more reads as noise)
         self.refs = 0    # numbered links between a far-away note and its target
+        self.badges: list[QPointF] = []  # where number badges went, so two never overlap
+        self.numbered: dict[str, str] = {}  # figure part id -> the number written on it
 
     # -- helpers -------------------------------------------------------------
 
@@ -119,7 +133,69 @@ class Composer:
 
     # -- public ----------------------------------------------------------------
 
+    def _checked_line(self, a: dict) -> dict:
+        """A note pointing at a text line should be about that line: if it shares not one word or
+        number with it (a note on torque "pointing" at the browser's address bar), drop the pointer
+        rather than draw a line to the wrong thing."""
+        t = a.get("target")
+        if a.get("op") != "note" or not isinstance(t, str) or t.strip().upper() not in self.scene.line_by_id:
+            return a
+        ln = self.scene.line_by_id[t.strip().upper()]
+        # Only when the lesson is a drawing and the line is outside it (tabs, the address bar, a
+        # sidebar): on a text slide a note may well paraphrase its line in other words.
+        parts = self.scene.visible_parts()
+        drawings = [r.box for r in self.scene.visible_regions()
+                    if sum(r.box.x <= p.box.cx <= r.box.x2 and r.box.y <= p.box.cy <= r.box.y2 for p in parts) >= 2]
+        if not drawings or any(d.x <= ln.box.cx <= d.x2 and d.y <= ln.box.cy <= d.y2 for d in drawings):
+            return a
+        said = " ".join(str(a.get(k, "")) for k in ("text", "say", "phrase")).lower()
+        if re.search(r"[^\x00-\x7F]{3,}", said.replace("→", "").replace("×", "")):
+            return a  # another language: can't compare words
+        key = {w for w in re.findall(r"[a-z]{4,}|\d+", ln.text.lower())}
+        if len(key) < 2 or any(w in said for w in key):
+            return a
+        return {k: v for k, v in a.items() if k not in ("target", "phrase")}
+
+    def _checked_part(self, a: dict) -> dict:
+        """The model often picks the wrong part id in a busy drawing while its own words are
+        right ("the red 50 N arrow to the right"). If the part it named doesn't have the colour
+        or direction it describes, point at the part that does."""
+        t = a.get("target")
+        part = self.scene.part_by_id.get(t.strip().upper()) if isinstance(t, str) else None
+        # Pointing a single mark at a whole region (the entire video frame) says nothing about
+        # where the thing is; the words usually do ("Force 1: the red arrow to the right").
+        # A guessed pixel box is no better: the words are more reliable than the model's pixels.
+        vague = isinstance(t, str) and t.strip().upper() in self.scene.region_by_id or isinstance(t, dict) and "box" in t
+        whole = vague and bool(self.scene.visible_parts()) and a.get("op") in ("number", "tag", "circle", "highlight",
+                                                                              "underline", "box")
+        if part is None and not whole:
+            return a
+        words = " ".join(str(a.get(k, "")) for k in ("say", "text", "label")).lower()
+        ink = next((w for w in _INK_WORDS if re.search(rf"\b{w}\b", words)), None)
+        m = _DIR_WORDS.search(words)
+        points = next(d for d, g in zip(_DIR_NAMES, m.groups()) if g) if m else None
+        guess = self.scene.resolve(t) if whole and isinstance(t, dict) else None
+        if ink is None and (points is None or whole and guess is None):
+            return a  # (direction alone, with no idea where, is too ambiguous: two arrows point right)
+        if whole:
+            better = self.scene.find_part(ink, points, near=guess)
+            return dict(a, target=better.id) if better is not None else a
+        from layout import _DIRS, _hue_matches
+
+        def fits(p) -> bool:
+            if ink and _hue_matches(ink, p.hue) == 0:
+                return False
+            if points and p.angle is not None and abs((p.angle - _DIRS[points] + 180) % 360 - 180) > 60:
+                return False
+            return True
+
+        if fits(part):
+            return a
+        better = self.scene.find_part(ink, points)
+        return dict(a, target=better.id) if better is not None and fits(better) else a
+
     def build(self, a: dict) -> list[Item]:
+        a = self._checked_line(self._checked_part(a))
         op = str(a.get("op", "")).lower()
         fn = getattr(self, f"_op_{op}", None)
         if fn is None:
@@ -170,7 +246,7 @@ class Composer:
         # A marker block over a drawing hides it: ring the part instead (each part of a set
         # on its own, since one ring around several scattered parts swallows half the figure).
         t = a.get("target")
-        is_part = lambda x: isinstance(x, str) and x.strip().upper().startswith("P")
+        is_part = lambda x: self.scene.part_for(x) is not None
         if is_part(t):
             return self._mark(a, Circle)
         if isinstance(t, list) and t and all(is_part(x) for x in t):
@@ -186,9 +262,47 @@ class Composer:
         if b is None:
             return []
         ink = self.scene.ink(self._ink_name(a), b)
-        c = QPointF(b.x - 16, b.cy) if b.x > 20 else QPointF(b.x + 12, b.y - 12)
+        part = self.scene.part_for(a.get("target"))
+        c = QPointF(b.x - 16, b.cy) if b.x > 20 else QPointF(b.x + 12, b.y - 12)  # a list number: left of the line
+        clash = any(abs(c.x() - o.x()) < 28 and abs(c.y() - o.y()) < 28 for o in self.badges)
+        if part is not None and part.tip is not None:
+            c = self._badge_spot(part)
+        elif clash:
+            spot, _ = self.scene.place(26, 26, Box(c.x() - 6, c.y() - 6, 12, 12))
+            c = QPointF(spot.cx, spot.cy)
         self.scene.reserve(Box(c.x() - 13, c.y() - 13, 26, 26), 1.0)
+        self.badges.append(c)
+        if part is not None:
+            self.numbered[part.id] = str(a.get("n", "?"))[:2]
         return [Badge(c, str(a.get("n", "?"))[:2], ink, self.badge_font)]
+
+    def _badge_spot(self, part) -> QPointF:
+        """Where a teacher writes the number of a mark in a drawing: just past its free end,
+        carrying on its line (unmistakably its own), else beside that end; the least covered
+        of those spots, never on another number."""
+        tx, ty = part.tip
+        ang = math.radians(part.angle) if part.angle is not None else None
+        tries = []
+        if ang is not None:
+            for r in (20, 30, 42):
+                tries.append((tx + r * math.cos(ang), ty + r * math.sin(ang), 0.0))
+            for side in (1, -1):
+                for r in (22, 32):
+                    tries.append((tx + r * math.cos(ang + side * math.pi / 2),
+                                  ty + r * math.sin(ang + side * math.pi / 2), 4.0))
+        for k in range(8):  # all round the end
+            tries.append((tx + 26 * math.cos(k * math.pi / 4), ty + 26 * math.sin(k * math.pi / 4), 8.0))
+        best, best_cost = None, 1e18
+        for x, y, penalty in tries:
+            if any(abs(x - o.x()) < 28 and abs(y - o.y()) < 28 for o in self.badges):
+                continue
+            cost = self.scene.space_cost(Box(x - 13, y - 13, 26, 26)) + penalty
+            if cost < best_cost:
+                best, best_cost = QPointF(x, y), cost
+        if best is None:
+            spot, _ = self.scene.place(26, 26, Box(tx - 6, ty - 6, 12, 12))
+            best = QPointF(spot.cx, spot.cy)
+        return best
 
     def _op_arrow(self, a):
         s = self._resolve_visible(a.get("from"), a.get("from_phrase"))
@@ -227,6 +341,13 @@ class Composer:
         s = self._resolve_visible(a.get("from"), a.get("from_phrase"))
         e = self._resolve_visible(a.get("to"), a.get("to_phrase"))
         if s is None or e is None:
+            return []
+        # A trace joins two specific things (two graph nodes). Between two whole regions, or
+        # across the screen, it's just a random stroke.
+        area = self.scene.w * self.scene.h
+        if max(s.w * s.h, e.w * e.h) > 0.05 * area or \
+                math.hypot(e.cx - s.cx, e.cy - s.cy) > 0.6 * math.hypot(self.scene.w, self.scene.h):
+            self.skipped_duplicates += 1
             return []
         ink = self.scene.ink(self._ink_name(a), s.union(e))
         return [Trace(_edge_point(s, _center(e), 1), _edge_point(e, _center(s), 1), ink)]
@@ -297,6 +418,12 @@ class Composer:
             return []
         target = self.scene.resolve(a.get("target"), a.get("phrase")) if a.get("target") or a.get("phrase") else None
         note = self._note(text, target, self._ink_name(a), self.note_font)
+        part = self.scene.part_for(a.get("target"))
+        if part is not None and part.id in self.numbered and note.leader is not None:
+            # This thing already has a number on the drawing: the note carries the same number
+            # rather than one more pointer line across the diagram.
+            note.leader = None
+            return [note, Badge(QPointF(note.box.x - 6, note.box.y - 6), self.numbered[part.id], note.ink, self.badge_font)]
         if target is None or not self._too_far(note.box, target):
             return [note]
         # Far from what it explains: link them with the same number, like ① in a textbook.

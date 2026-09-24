@@ -25,11 +25,64 @@ class Region:
     id: str
     box: Box
     color: str = ""  # figure parts: the ink colour ("red", "white"...), to match "the red 50 N arrow"
+    tip: tuple[float, float] | None = None  # figure parts: the free end (arrowhead, label)
+    hue: float | None = None    # figure parts: mean OpenCV hue (0-179) of its ink; None for white/black/grey
+    angle: float | None = None  # figure parts: direction from its crowded end to its free end (degrees, y down)
+    straight: float = 0.0       # figure parts: 1 = a straight stroke (an arrow, a rod), 0 = a scribble (handwriting)
+
+
+# The words people use for a colour, as OpenCV hue ranges (overlapping on purpose: one person's
+# purple is another's magenta).
+_HUE_WORDS = {
+    "red": [(165, 180), (0, 10)], "crimson": [(165, 180), (0, 8)], "orange": [(6, 24)], "brown": [(4, 24)],
+    "peach": [(4, 24)], "yellow": [(20, 38)], "gold": [(18, 34)], "lime": [(30, 50)], "green": [(35, 88)],
+    "teal": [(78, 100)], "cyan": [(80, 104)], "aqua": [(80, 104)], "turquoise": [(78, 100)],
+    "light blue": [(85, 112)], "sky blue": [(88, 112)], "blue": [(90, 132)], "navy": [(105, 130)],
+    "indigo": [(115, 138)], "violet": [(122, 155)], "purple": [(122, 158)], "lavender": [(120, 150)],
+    "magenta": [(138, 172)], "pink": [(140, 178)], "fuchsia": [(140, 172)],
+}
+_DIRS = {"right": 0, "down-right": 45, "down": 90, "down-left": 135, "left": 180, "up-left": 225, "up": 270,
+         "up-right": 315, "east": 0, "south": 90, "west": 180, "north": 270}
 
 
 # ink colour names by OpenCV hue (0-179)
 _HUES = [(8, "red"), (22, "orange"), (35, "yellow"), (85, "green"), (100, "cyan"), (130, "blue"), (150, "purple"),
          (170, "pink"), (180, "red")]
+
+
+def _direction(angle: float | None) -> str:
+    """Which way a mark points (screen y grows downward); "" for a short or round mark."""
+    if angle is None:
+        return ""
+    names = ["right", "down-right", "down", "down-left", "left", "up-left", "up", "up-right"]
+    return names[int(((angle + 22.5) % 360) // 45)]
+
+
+def _hue_name(hue: float | None, plain: str) -> str:
+    if hue is None:
+        return plain
+    lo = 0
+    for hi, name in _HUES:
+        if lo <= hue < hi:
+            return name
+        lo = hi
+    return "red"
+
+
+def _hue_matches(word: str, hue: float | None) -> float:
+    """1 if the colour word fits this hue, 0.5 near the edge of its range, else 0."""
+    word = word.lower().strip()
+    if hue is None:
+        return 1.0 if word in ("white", "black", "grey", "gray", "chalk") else 0.0
+    best = 0.0
+    for key, ranges in _HUE_WORDS.items():
+        if key in word:
+            for lo, hi in ranges:
+                if lo <= hue <= hi:
+                    return 1.0
+                if lo - 6 <= hue <= hi + 6:
+                    best = 0.5
+    return best
 
 
 def _scale_line(line: Line, s: float) -> Line:
@@ -219,42 +272,219 @@ class Scene:
                 sel = ink & (names == name)
                 if sel.sum() < 30:
                     continue
-                label = ("white" if bg.mean() < 110 else "black") if name == "plain" else name
-                found += [(b, label) for b in self._stroke_parts(sel, x0, y0, ra, inv)]
-        found = sorted(found, key=lambda f: -f[0].w * f[0].h)[:20]
-        found.sort(key=lambda f: (round(f[0].y / 40), f[0].x))
-        return [Region(f"P{i + 1}", b, c) for i, (b, c) in enumerate(found)]
+                plain = "white" if bg.mean() < 110 else "black"
+                hues = h_ if name != "plain" else None
+                # A filled shape (the object a diagram's forces act on) is not the thin arrow of the
+                # same colour touching it: split off what's thick.
+                dt = cv2.distanceTransform(sel.astype(np.uint8), cv2.DIST_L2, 3)
+                core = dt > 6 * inv
+                if core.sum() > (20 * inv) ** 2:
+                    kk = max(3, int(14 * inv))
+                    blob = cv2.dilate(core.astype(np.uint8), np.ones((kk, kk), np.uint8)).astype(bool) & sel
+                    crowd = np.pad((ink & ~blob).astype(np.int32), ((1, 0), (1, 0))).cumsum(0).cumsum(1)
+                    for b, t, _a, hue, _s in self._stroke_parts(blob, x0, y0, ra, inv, crowd, hues):
+                        found.append(Region("", b, _hue_name(hue, plain) + ", filled shape", t, hue, None))
+                    sel = sel & ~blob
+                crowd = np.pad((ink & ~sel).astype(np.int32), ((1, 0), (1, 0))).cumsum(0).cumsum(1)
+                for b, t, angle, hue, straight in self._stroke_parts(sel, x0, y0, ra, inv, crowd, hues):
+                    d = _direction(angle)
+                    round_ = 0.8 <= b.w / max(b.h, 1) <= 1.25 and max(b.w, b.h) <= 60 and \
+                        (angle is None or math.hypot(b.w, b.h) < 70)
+                    desc = _hue_name(hue, plain) + (", round" if round_ else "") + (f", points {d}" if d and not round_ else "")
+                    found.append(Region("", b, desc, t, hue, None if round_ else angle, straight))
+            found += self._rings(ink, x0, y0, inv, plain, h_, coloured)
+        # Keep the most prominent marks. Rank by length, not area: a force arrow is long and thin.
+        rings: list[Region] = []
+        for p in found:  # overlapping regions find the same ring twice
+            if p.color.endswith("round") and not any(abs(p.box.cx - q.box.cx) < p.box.w / 2 and
+                                                     abs(p.box.cy - q.box.cy) < p.box.h / 2 for q in rings):
+                rings.append(p)
+        rings = rings[:4]
+        strokes = [p for p in found if not p.color.endswith("round")]
+        found = sorted(strokes, key=lambda p: -max(p.box.w, p.box.h))[:36] + rings
+        found.sort(key=lambda p: (round(p.box.y / 40), p.box.x))
+        for i, p in enumerate(found):
+            p.id = f"P{i + 1}"
+        return found
 
-    def _stroke_parts(self, ink: np.ndarray, x0: int, y0: int, ra: int, inv: float) -> list[Box]:
-        """Connected marks of one colour; a long stroke is split by position into pieces."""
+    def part_for(self, target) -> Region | None:
+        """The figure part a target names: "P7", or a description {"ink": "red", "points": "right"}."""
+        if isinstance(target, str):
+            if target.strip().upper() in self.part_by_id:
+                return self.part_by_id[target.strip().upper()]
+            # a description copied as text: "red, points right" / "white, round"
+            t = target.lower()
+            ink = next((w for w in sorted(_HUE_WORDS, key=len, reverse=True) + ["white", "black", "grey", "gray"]
+                        if re.search(rf"\b{w}\b", t)), None)
+            m = re.search(r"points? ([a-z-]+(?: [a-z-]+)?)", t)
+            shape = "round" if "round" in t else "filled" if "filled" in t else None
+            if ink is None or len(t.split()) > 6:
+                return None  # not a colour description (or a whole sentence)
+            return self.find_part(ink, m.group(1).replace(" ", "-") if m else None, shape)
+        if isinstance(target, dict) and ("ink" in target or "points" in target or "shape" in target):
+            return self.find_part(target.get("ink"), target.get("points"), target.get("shape"))
+        return None
+
+    def find_part(self, ink: str | None = None, points: str | None = None, shape: str | None = None,
+                  near: Box | None = None) -> Region | None:
+        """The part a description means: "the purple arrow pointing down". Matching by what
+        the model can see (colour, direction, shape) instead of by reading a tiny id label."""
+        want = _DIRS.get(str(points or "").lower().strip().replace(" ", "-").replace("upper", "up").replace("lower", "down"))
+        shape = str(shape or "").lower()
+        best, best_score = None, 0.0
+        for p in self.visible_parts():
+            # Colour is what the tutor names most reliably (it mixes up left and right more often):
+            # an exact colour outweighs any direction, a near-miss colour counts for little.
+            fit = _hue_matches(ink, p.hue) if ink else 1.0
+            if ink and fit == 0:
+                continue
+            score = 3.0 if fit == 1.0 else 0.5
+            for word in ("round", "filled"):
+                if word in shape:
+                    score += 1.5 if word in p.color else -1.0
+            if want is not None:
+                if p.angle is None:
+                    score += 0.2
+                else:
+                    # "points" means crowded end -> free end, right for arrows drawn out from an object;
+                    # an arrow pushing INTO something has its head at the crowded end, so the reverse
+                    # also counts, a little less.
+                    diff = abs((p.angle - want + 180) % 360 - 180)
+                    fwd = max(0.0, 1.5 - diff / 45)
+                    back = 0.7 * max(0.0, 1.5 - (180 - diff) / 45)
+                    score += max(fwd, back) - (1.0 if diff > 67.5 and back == 0 else 0.0)  # the wrong way is wrong
+            score += min(0.5, max(p.box.w, p.box.h) / 600)  # the prominent one, all else equal
+            if want is not None:
+                score += 0.4 * p.straight  # something that "points" is a stroke, not handwriting
+            if near is not None:  # a rough guess of where it is breaks ties
+                score += max(0.0, 0.8 - math.hypot(p.box.cx - near.cx, p.box.cy - near.cy) / 300)
+            if score > best_score:
+                best, best_score = p, score
+        if best is None and ink and not _hue_matches(ink, None):
+            # no mark has exactly that colour ("blue" for a cyan arrow): take the nearest hue
+            centre = next((sum(r[0]) / 2 for k, r in _HUE_WORDS.items() if k in ink.lower()), None)
+            coloured = [p for p in self.visible_parts() if p.hue is not None]
+            if centre is not None and coloured:
+                dist = lambda h: min(abs(h - centre), 180 - abs(h - centre))
+                close = [p for p in coloured if dist(p.hue) <= 25]
+                if close:
+                    def fit(p):
+                        s = -dist(p.hue) / 25
+                        if want is not None and p.angle is not None:
+                            s += max(0.0, 1.5 - abs((p.angle - want + 180) % 360 - 180) / 45)
+                        return s + min(0.5, max(p.box.w, p.box.h) / 600)
+                    return max(close, key=fit)
+        return best
+
+    def _rings(self, ink: np.ndarray, x0: int, y0: int, inv: float, plain: str, hues: np.ndarray,
+               coloured: np.ndarray) -> list[Region]:
+        """Small drawn circles (a pivot, a wheel, a node) as their own marks, even when they
+        touch a rod or a line: a ring whose outline really is inked all round."""
+        g = cv2.GaussianBlur(ink.astype(np.uint8) * 255, (5, 5), 0)
+        found = cv2.HoughCircles(g, cv2.HOUGH_GRADIENT, dp=1.2, minDist=max(10, int(20 * inv)), param1=100,
+                                 param2=18, minRadius=max(6, int(14 * inv)), maxRadius=max(8, int(45 * inv)))
+        out: list[Region] = []
+        if found is None:
+            return out
+        H, W = ink.shape
+        for cx, cy, r in found[0][:12]:
+            ts = np.linspace(0, 2 * np.pi, 48, endpoint=False)
+            xs = np.clip((cx + r * np.cos(ts)).astype(int), 0, W - 1)
+            ys = np.clip((cy + r * np.sin(ts)).astype(int), 0, H - 1)
+            near_ink = cv2.dilate(ink.astype(np.uint8), np.ones((5, 5), np.uint8))[ys, xs]
+            inside = ink[max(0, int(cy - r * 0.5)):int(cy + r * 0.5), max(0, int(cx - r * 0.5)):int(cx + r * 0.5)]
+            if near_ink.mean() < 0.85 or inside.size == 0 or inside.mean() > 0.15:
+                continue  # not a drawn ring (a letter's loop, a filled blob, noise)
+            on = coloured[ys, xs] & (near_ink > 0)
+            hue = None
+            if on.sum() > len(ts) / 2:
+                hs = hues[ys[on], xs[on]].astype(np.float64) * (np.pi / 90)
+                hue = float(math.degrees(math.atan2(np.sin(hs).mean(), np.cos(hs).mean())) / 2) % 180
+            b = Box(float(x0 + cx - r), float(y0 + cy - r), float(2 * r), float(2 * r)).scaled(self.scale)
+            if any(abs(b.cx - o.box.cx) < b.w / 2 and abs(b.cy - o.box.cy) < b.h / 2 for o in out):
+                continue
+            out.append(Region("", b, _hue_name(hue, plain) + ", round", (b.cx, b.cy), hue, None))
+            if len(out) >= 4:
+                break
+        return out
+
+    def _stroke_parts(self, ink: np.ndarray, x0: int, y0: int, ra: int, inv: float, crowd: np.ndarray,
+                      hues: np.ndarray | None) -> list[tuple[Box, tuple[float, float], float | None, float | None, float]]:
+        """Connected marks of one colour; a long stroke is split by position into pieces.
+        Each comes with its tip: of its two ends, the one with less OTHER ink around it
+        (`crowd`: integral image of the other marks, patch pixels). Arrows in a diagram
+        meet at a crowded junction; the free end, with the label, is where a teacher
+        writes "1"."""
         k = max(3, int(7 * inv))  # joins the letters of a label and the label to its arrow
         mask = cv2.dilate(ink.astype(np.uint8), np.ones((k, k), np.uint8))
         n, labels, stats, _ = cv2.connectedComponentsWithStats(mask, 8)
-        out: list[Box] = []
+        out: list[tuple[Box, tuple[float, float], float | None, float | None, float]] = []
+        H, W = ink.shape
+        r = int(30 * inv)
+
+        def busy(px: float, py: float) -> int:
+            xa, xb = max(0, int(px) - r), min(W, int(px) + r)
+            ya, yb = max(0, int(py) - r), min(H, int(py) + r)
+            return int(crowd[yb, xb] - crowd[ya, xb] - crowd[yb, xa] + crowd[ya, xa])
+
+        def ends_of(q: np.ndarray, ox: int, oy: int):
+            """(free end, crowded end): the extremes along its longest direction."""
+            c = q - q.mean(axis=0)
+            axis = np.linalg.svd(c, full_matrices=False)[2][0] if len(q) > 2 else np.array([1.0, 0.0])
+            proj = c @ axis
+            ends = [q[int(np.argmin(proj))], q[int(np.argmax(proj))]]
+            ends.sort(key=lambda e: busy(e[0] + ox - x0, e[1] + oy - y0))
+            return ends[0], ends[1]
+
+        def piece(q: np.ndarray, ox: int, oy: int, pad: float, hub=None):
+            qx, qy = q[:, 0].min(), q[:, 1].min()
+            b = Box(float(ox + qx), float(oy + qy), float(q[:, 0].max() - qx + 1), float(q[:, 1].max() - qy + 1))
+            end, base = ends_of(q, ox, oy)
+            if hub is not None:
+                # a chunk of a bigger shape points away from that shape's crowded end (an arrow
+                # cut in pieces still points away from the object it starts at)
+                c = q - q.mean(axis=0)
+                axis = np.linalg.svd(c, full_matrices=False)[2][0] if len(q) > 2 else np.array([1.0, 0.0])
+                proj = c @ axis
+                two = [q[int(np.argmin(proj))], q[int(np.argmax(proj))]]
+                end = max(two, key=lambda e: (e[0] - hub[0]) ** 2 + (e[1] - hub[1]) ** 2)
+                base = hub
+            dx, dy = float(end[0] - base[0]), float(end[1] - base[1])
+            angle = math.degrees(math.atan2(dy, dx)) % 360 if math.hypot(dx, dy) >= 40 * inv else None
+            hue = None
+            if hues is not None:  # circular mean: red sits at both ends of the hue circle
+                hs = hues[(q[:, 1] + oy - y0).astype(int), (q[:, 0] + ox - x0).astype(int)].astype(np.float64) * (np.pi / 90)
+                hue = float(math.degrees(math.atan2(np.sin(hs).mean(), np.cos(hs).mean())) / 2) % 180
+            sv = np.linalg.svd(q - q.mean(axis=0), compute_uv=False) if len(q) > 2 else np.array([1.0, 1.0])
+            straight = float(max(0.0, 1 - (sv[1] / max(sv[0], 1e-6)) / 0.5))
+            out.append((b.scaled(self.scale).pad(pad), ((ox + end[0]) * self.scale, (oy + end[1]) * self.scale), angle, hue,
+                        straight))
+
         for i in range(1, n):
             x, y, w, h, _a = stats[i]
             b = Box(float(x + x0), float(y + y0), float(w), float(h)).scaled(self.scale)
             if max(b.w, b.h) < 18 or min(b.w, b.h) < 10 and max(b.w, b.h) < 45 or w * h > 0.5 * ra:
                 continue  # specks and dash fragments, or the frame itself
+            ys, xs = np.nonzero((labels[y:y + h, x:x + w] == i) & ink[y:y + h, x:x + w])
+            pts = np.column_stack([xs, ys]).astype(np.float32)[:: max(1, len(xs) // 4000)]
             k = int(min(6, round((b.w + b.h) / 120)))
-            if k < 2:
-                out.append(b)
+            if k >= 2 and len(pts) > 8:
+                sv = np.linalg.svd(pts - pts.mean(axis=0), compute_uv=False)
+                if sv[1] < 0.2 * sv[0]:
+                    k = 1  # one straight stroke (an arrow) is one thing: don't cut it up
+            if k < 2 or len(pts) < 4 * k:
+                if len(pts):
+                    piece(pts, x + x0, y + y0, 0)
                 continue
             # One long connected stroke (a rod with its pivot and the force arrow) is
             # really several things: split it by position so each piece gets a name.
-            ys, xs = np.nonzero((labels[y:y + h, x:x + w] == i) & ink[y:y + h, x:x + w])
-            pts = np.column_stack([xs, ys]).astype(np.float32)[:: max(1, len(xs) // 4000)]
-            if len(pts) < 4 * k:
-                out.append(b)
-                continue
             crit = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 1.0)
             _, lab, _ = cv2.kmeans(pts, k, None, crit, 3, cv2.KMEANS_PP_CENTERS)
+            hub = ends_of(pts, x + x0, y + y0)[1]
             for c in range(k):
                 q = pts[lab.ravel() == c]
                 if len(q):
-                    qx, qy = q[:, 0].min(), q[:, 1].min()
-                    out.append(Box(float(x + x0 + qx), float(y + y0 + qy), float(q[:, 0].max() - qx + 1),
-                                   float(q[:, 1].max() - qy + 1)).scaled(self.scale).pad(3))
+                    piece(q, x + x0, y + y0, 3, hub)
         return out
 
     # ---- the model's view -------------------------------------------------
@@ -302,6 +532,9 @@ class Scene:
                 lines += l2
                 boxes += b2
             return lines, boxes
+        if isinstance(target, dict) and ("ink" in target or "points" in target or "shape" in target):
+            p = self.part_for(target)
+            return [], [p.box] if p is not None else []
         if isinstance(target, dict) and "box" in target:
             try:
                 b = self.from_model(target["box"])
@@ -326,8 +559,9 @@ class Scene:
                 r = self.region_by_id[t].box
                 inside = [l for l in self.lines if r.x <= l.box.cx <= r.x2 and r.y <= l.box.cy <= r.y2]
                 return inside, [r]
-            if t in self.part_by_id:
-                return [], [self.part_by_id[t].box]
+            p = self.part_for(target)  # a part id, or a description copied as text
+            if p is not None:
+                return [], [p.box]
         return [], []
 
     def resolve(self, target=None, phrase: str | None = None) -> Box | None:
@@ -387,6 +621,13 @@ class Scene:
         return out
 
     # ---- finding space for notes -------------------------------------------
+
+    def space_cost(self, b: Box) -> float:
+        """How much a drawing at b would cover: content, and (much worse) other drawings."""
+        y0, y1, x0, x1 = self._cells(b)
+        if b.x < 0 or b.y < 0 or b.x2 > self.w or b.y2 > self.h or y1 <= y0 or x1 <= x0:
+            return 1e9
+        return float((self.occ[y0:y1, x0:x1] + self.reserved[y0:y1, x0:x1] * 40).sum())
 
     def place(self, w: float, h: float, near: Box | None = None) -> tuple[Box, bool]:
         """Best spot for a w x h drawing: empty, on screen, close to `near`.
