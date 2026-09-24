@@ -41,7 +41,8 @@ Decide whether the screen, the digest and solid general knowledge are enough to 
 STEP 2 - DRAW. Reply ONLY with drawing actions: one JSON object per line (JSON Lines). No prose, no markdown, no code fences.
 
 TARGETS - point at things by id, never by guessing pixels:
-- "L12" a text line, "R2" a region, "P4" a part of a figure (a stroke, arrow, symbol; its id is written in yellow beside it on the screenshot), "L3-L7" several consecutive lines, ["L3","P9"] a set.
+- "L12" a text line, "R2" a region, "L3-L7" several consecutive lines, ["L3","L9"] a set.
+- A mark inside a hand-drawn sketch (an arrow, stroke, circle, symbol): when MARKS IN THE DRAWING is given, describe it, {"ink":"red","points":"right"} or {"ink":"white","shape":"round"}.
 - "phrase": the exact words inside the target line to pinpoint, copied exactly from its text.
 - Only if nothing listed covers it: {"box":[x,y,w,h]} in screenshot pixels.
 
@@ -52,6 +53,9 @@ ACTIONS (every one carries "say", see VOICE)
 {"op":"box","target":"L3-L7","say":"..."}   group lines that belong together
 {"op":"arrow","from":"L2","to":"R1","label":"feeds","say":"This feeds into that."}   only to join two separate things on screen that are directly related, with a label saying how (at most 2 per answer; from_phrase/to_phrase allowed). Never for emphasis, never into empty space, never from a note: notes already point at their target.
 {"op":"number","target":"L5","n":1,"say":"..."}   step-order badge
+Only when MARKS IN THE DRAWING appears below (a hand-drawn sketch fills the screen), target a mark in it by describing it:
+{"op":"number","target":{"ink":"red","points":"right"},"n":1,"say":"Force one: the red 50 newton arrow, pushing right."}   the app puts the 1 at that arrow's end, by its label
+{"op":"circle","target":{"ink":"white","shape":"round"},"say":"This circle is the pivot."}
 {"op":"note","target":"L4","phrase":"learning rate","text":"How big each step is. Too big = you overshoot.","say":"This is how big each step is. Make it too big and you jump right past the answer."}   handwritten explanation; the app finds empty space beside the target and draws a pointer to it
 {"op":"diagram","target":"R1","title":"Gradient descent","nodes":["Guess","Measure error","Step downhill"],"edges":[[0,1,""],[1,2,""],[2,0,"repeat"]],"say":"..."}   a small sketch (max 5 nodes) of something NOT already pictured on screen: a flow, cycle, cause->effect, comparison, analogy
 {"op":"trace","from":"L5","to":"L9","color":"green","say":"..."}   a thick marker stroke along a connection, e.g. a graph edge or one step of a path
@@ -64,7 +68,8 @@ Colors: red, blue, green, purple, orange. Keep one colour per idea (a mark and i
 HOW TO TEACH
 - Answer the user's actual question. If they only point at an area, explain the most confusing idea in it.
 - Mark first, then explain: circle or highlight the thing, then a note on it.
-- Teach ON the picture. When the screen shows a figure, diagram, video frame, chart or formula, point at its actual parts (the pivot, the force arrow, the distance r, a curve, each symbol of the formula) and explain each one there. Use the FIGURE PARTS (P ids) or lines inside the figure; a {"box"} only if neither covers it. Several parts that form one thing (a rod drawn in pieces) can be a set: ["P4","P6"]. Only add a "diagram" if the picture you need isn't on screen.
+- Teach ON the picture. When the screen shows a figure, diagram, video frame, chart or formula, point at its actual parts (the pivot, the force arrow, the distance r, a curve, each symbol of the formula) and explain each one there. Point at a mark by describing it (see MARKS IN THE DRAWING) or by the text lines inside the figure; a {"box"} only if neither covers it. To number or label several things in a drawing (forces, parts), one "number" or "tag" per thing, each targeting that thing's own description, and include EVERY one: count their labels first (F1, F2 ... F7) so none is skipped. Only add a "diagram" if the picture you need isn't on screen.
+- Never target a whole region (R ids) for one thing inside it: describe that thing instead.
 - A mark or pointer must land on the thing it explains. A title, heading or caption that merely contains the same word is not that thing: never point at it instead of the figure.
 - To explain a formula: mark each symbol, say what it stands for and how changing it changes the result, then give one everyday example.
 - "What is happening here?" / "I'm confused": teach THIS example like a teacher at the board, in order, simply: 1) what the situation is (the object, what it's made of or weighs); 2) the things acting on it, one by one, with their real values read from the screen ("this 50 N pushes right"); 3) what is being worked out and why; 4) the result, using the actual numbers on screen. No general advice ("identify each force...") in place of the actual example. One idea per step, everyday words.
@@ -72,7 +77,7 @@ HOW TO TEACH
 - Notes: at most 15 words, plain language, an analogy or a concrete example when possible. Never just restate the screen.
 - Notes explain the idea itself. Never narrate what you are doing ("I'll open...", "Let me...").
 - Never speculate about what you cannot see or know (what someone said or likely said, private details). Explain what is visible instead.
-- Every note that uses fetched context ends with its source in brackets: "(video 3:12)", "(p. 14)", "(slide 5)", "(Wikipedia)".
+- Every note that uses fetched context ends its written "text" with its source in brackets: "(video 3:12)", "(p. 14)", "(slide 5)", "(Wikipedia)".
 - Usually 3 to 8 actions; teaching a whole example to a confused learner up to 11, always ending with the summary (walkthroughs: as many steps as they need, max 30). Don't cover the whole screen.
 - Use only ids from the lists. Don't place notes yourself.
 - LANGUAGE: every note, tag, label, caption, summary and "say" is in the language of the user's question (a Bangla question gets Bangla notes and Bangla "say"), even when the screen is in English."""
@@ -128,18 +133,24 @@ def _encode(img) -> tuple[str, int, int]:
     return base64.standard_b64encode(buf.getvalue()).decode(), img.width, img.height
 
 
-def _elements(scene: Scene) -> str:
+def _elements(scene: Scene, drawing: bool = True) -> str:
     rows = []
     for ln in scene.visible_lines()[:220]:
         text = ln.text if len(ln.text) <= 90 else ln.text[:87] + "..."
         kind = " (node)" if ln.kind == "node" else ""  # a label inside a drawn circle, e.g. a graph vertex
         rows.append(f"{ln.id} {scene.to_model(ln.box)} {json.dumps(text, ensure_ascii=False)}{kind}")
     regs = [f"{r.id} {scene.to_model(r.box)}" for r in scene.visible_regions()]
-    parts = [f"{p.id} {scene.to_model(p.box)} {p.color}".rstrip() for p in scene.visible_parts()]
     out = "TEXT LINES\n" + ("\n".join(rows) or "(none)") + "\n\nREGIONS\n" + ("\n".join(regs) or "(none)")
-    if parts:
-        out += ("\n\nFIGURE PARTS (marks inside drawings, labelled P1, P2... in yellow on the screenshot; "
-                "point at the part you explain, e.g. the pivot, an arrow, a curve, a hand-written symbol)\n" + "\n".join(parts))
+    if drawing and scene.visible_parts():
+        # No list of marks on purpose: given one, the model copies a wrong entry from it; asked to
+        # describe what it sees, it is right nearly every time, and the app finds the mark.
+        out += ("\n\nMARKS IN THE DRAWING: the app has found the hand-drawn marks (arrows, strokes, circles). "
+                "To point at one, DESCRIBE it as you see it in the image and the app finds it: "
+                "{\"ink\":\"purple\",\"points\":\"down\"} = the purple arrow pointing down; "
+                "{\"ink\":\"white\",\"shape\":\"round\"} = a small white circle; {\"ink\":\"orange\",\"shape\":\"filled\"} "
+                "= a filled blob. \"ink\" is the colour it is drawn in; \"points\" is where its free end (usually "
+                "with its label) is, seen from where it starts: right, left, up, down, up-left, up-right, down-left, "
+                "down-right.")
     return out
 
 
@@ -166,12 +177,15 @@ def _label_parts(crop, scene: Scene, view: Box):
     s = 1 / scene.scale
     font = ImageFont.truetype("arialbd.ttf", max(12, round(15 * s)))
     for p in parts:
-        x, y = (p.box.x - view.x) * s, (p.box.y - view.y) * s
-        d.rectangle((x, y, (p.box.x2 - view.x) * s, (p.box.y2 - view.y) * s), outline=(250, 204, 21), width=max(1, round(s)))
+        # The id goes at the part's free end (an arrow's head, by its own label): those are spread
+        # out, unlike box corners, which pile up where all the arrows meet.
+        tx, ty = p.tip if p.tip is not None else (p.box.x, p.box.y)
+        x, y = (tx - view.x) * s, (ty - view.y) * s
         tw = d.textlength(p.id, font=font)
-        ty = y - font.size - 4 if y > font.size + 4 else y + 2
-        d.rectangle((x, ty, x + tw + 6, ty + font.size + 3), fill=(250, 204, 21))
-        d.text((x + 3, ty), p.id, font=font, fill=(0, 0, 0))
+        lx = min(max(0, x - tw / 2 - 3), img.width - tw - 6)
+        ly = min(max(0, y - font.size / 2 - 2), img.height - font.size - 3)
+        d.rectangle((lx, ly, lx + tw + 6, ly + font.size + 3), fill=(250, 204, 21), outline=(0, 0, 0))
+        d.text((lx + 3, ly), p.id, font=font, fill=(0, 0, 0))
     return img
 
 
@@ -243,6 +257,10 @@ _WALKTHROUGH = re.compile(r"(?i)step[- ]by[- ]step|walk (me )?through|\btrace\b|
                           r"how (can|do|would) (i|we|you) (reach|get|go)|shortest path|run (the|this) algorithm|"
                           r"\bsolve\b|\bderive\b|work (it )?out|go through|demonstrat")
 
+# A question about something beyond the screen (what was said, earlier or later, elsewhere).
+_ELSEWHERE = re.compile(r"(?i)\b(said|say|says|saying|mention|mentioned|earlier|before|previous|later|next|"
+                        r"rest of|other (page|slide|part)|transcript|who|when|source|latest|today|recommend)\b")
+
 _SPECULATION = re.compile(r"(?i)\b(likely|probably|presumably|might have|may have|must have)\b[^.]{0,40}"
                           r"\b(said|say|explained|covered|mentioned|talked|showed|discussed|meant)\b")
 
@@ -255,7 +273,7 @@ def _cite_hint(name: str, result: str) -> str:
     else:
         urls = re.findall(r"https?://(?:www\.)?([^/\s]+)", result[:3000])
         form = f"({urls[0]})" if urls else "(the website's name)"
-    return f"\n\n[Notes that use this must end with the source, like {form}.]"
+    return f"\n\n[Notes that use this must end their written \"text\" with the source, like {form} (not only in \"say\").]"
 
 
 TOOL_STATUS = {
@@ -287,7 +305,7 @@ class Session:
         view = selection if selection is not None else Box(0, 0, scene.w, scene.h)
         s = 1 / scene.scale
         crop = image.crop((round(view.x * s), round(view.y * s), round(view.x2 * s), round(view.y2 * s)))
-        labelled = _label_parts(crop, scene, view)
+        labelled = _label_parts(crop, scene, view) if config.LABEL_PARTS else crop
         self.b64, pw, ph = _encode(labelled)
         scene.set_view(view, pw, ph)
         # Hand-written numbers in a drawing are tiny once the whole screen is shrunk for
@@ -302,8 +320,8 @@ class Session:
                            round((fig.x2 - view.x) * s), round((fig.y2 - view.y) * s)))
             self.zoom_b64 = _encode(z)[0]
             self.zoom_note = (f"\n\nZOOM: the second image is the drawing at {scene.to_model(fig)} enlarged and without "
-                              f"labels. Read values, symbols and colours there; point using the P/L ids from the "
-                              f"first image (or boxes in first-image pixels).")
+                              f"labels. Read values, symbols and colours there; point by describing the mark (or by "
+                              f"L ids, or boxes in first-image pixels).")
 
     def cancel(self) -> None:
         self._cancel.set()
@@ -340,7 +358,7 @@ class Session:
             self.context_text = self._context_text()
             self.toolbox = Toolbox(self.source)
             content = [
-                {"type": "text", "text": f"{_elements(self.scene)}\n\n{self.context_text}{self.zoom_note}"
+                {"type": "text", "text": f"{_elements(self.scene, self.drawing_lesson)}\n\n{self.context_text}{self.zoom_note}"
                                          f"\n\nUSER QUESTION\n{question}{mode}"},
                 {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{self.b64}",
                                                     "detail": config.IMAGE_DETAIL}},
@@ -355,7 +373,10 @@ class Session:
         tools = self.toolbox.specs()
         # The typed context check runs in parallel with the drawing request.
         # (A walkthrough of something on screen needs nothing more: the picture is the source.)
-        check = _pool.submit(self._check, question) if tools and config.CONTEXT_CHECK and not self._walkthrough else None
+        # (Nor does explaining a drawing that fills the screen, unless the question reaches beyond it:
+        # the text-only checker can't see the drawing and keeps asking for the transcript.)
+        on_screen = self._walkthrough or self.drawing_lesson and not _ELSEWHERE.search(question)
+        check = _pool.submit(self._check, question) if tools and config.CONTEXT_CHECK and not on_screen else None
         for round_no in range(config.MAX_TOOL_ROUNDS + 1):
             last = round_no == config.MAX_TOOL_ROUNDS
             gate = self._gate(check) if round_no == 0 else None

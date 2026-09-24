@@ -61,3 +61,6 @@ NOTE_FONT_PX = int(_get("CHALK_FONT_PX", "18"))
 
 # Longest side of the image sent to the model. Smaller = faster upload and fewer tokens.
 MODEL_IMAGE_MAX = int(_get("CHALK_IMAGE_MAX", "1568"))
+# Write figure-part ids on the model's copy of the screen (set-of-marks). Off: it matches parts by
+# their listed colour and direction, which proved far more reliable in crowded diagrams.
+LABEL_PARTS = _get("CHALK_LABEL_PARTS", "0") == "1"
