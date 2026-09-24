@@ -349,8 +349,23 @@ class Composer:
                 math.hypot(e.cx - s.cx, e.cy - s.cy) > 0.6 * math.hypot(self.scene.w, self.scene.h):
             self.skipped_duplicates += 1
             return []
+        if not self._joined(s, e):
+            self.skipped_duplicates += 1
+            return []  # two graph nodes with no line between them in the picture: never draw a fake edge
         ink = self.scene.ink(self._ink_name(a), s.union(e))
         return [Trace(_edge_point(s, _center(e), 1), _edge_point(e, _center(s), 1), ink)]
+
+    def _joined(self, s: Box, e: Box) -> bool:
+        """For two graph nodes: is there a drawn edge between them? (True if it's not a graph.)"""
+        edges = self.scene.graph_edges()
+        if not edges:
+            return True
+        node = lambda b: next((l for l in self.scene.lines if l.kind == "node" and abs(l.box.cx - b.cx) < 2
+                               and abs(l.box.cy - b.cy) < 2), None)
+        a, b = node(s), node(e)
+        if a is None or b is None:
+            return True  # not two nodes: nothing to check
+        return any({x.id, y.id} == {a.id, b.id} for x, y, _ in edges)
 
     def _op_tag(self, a):
         if isinstance(a.get("target"), list):  # one step, many values: e.g. "∞" on every other node
@@ -452,6 +467,8 @@ class Composer:
         boxes = [nodes.get(n.upper()) for n in names]
         if len(boxes) < 2 or any(b is None for b in boxes):
             return []
+        if not all(self._joined(s, e) for s, e in zip(boxes, boxes[1:])):
+            return []  # the path uses an edge that isn't in the picture: don't draw it
         ink = INKS_STRONG
         return [Trace(_edge_point(s, _center(e), 1), _edge_point(e, _center(s), 1), ink)
                 for s, e in zip(boxes, boxes[1:])]

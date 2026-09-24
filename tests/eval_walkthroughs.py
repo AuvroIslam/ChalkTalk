@@ -122,9 +122,6 @@ def check_dijkstra(ctx, src, dst):
     final = {n: vals[-1] for n, vals in ctx["tags"].items() if vals}
     if final.get(src) != 0 and 0 not in ctx["tags"].get(src, []):
         problems.append(f"start {src} not tagged 0")
-    inf_nodes = {n for n, vals in ctx["tags"].items() if math.inf in vals}
-    if len(inf_nodes) < len(names) - 1:
-        problems.append(f"∞ written on {len(inf_nodes)}/{len(names) - 1} other nodes")
     settled = set(ctx.get("circled", []))
     for n, v in final.items():
         # A node settled (circled) must show its true distance. One still waiting when the search

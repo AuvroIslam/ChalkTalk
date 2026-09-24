@@ -50,6 +50,13 @@ _HUES = [(8, "red"), (22, "orange"), (35, "yellow"), (85, "green"), (100, "cyan"
          (170, "pink"), (180, "red")]
 
 
+def _seg_dist(px: float, py: float, ax: float, ay: float, bx: float, by: float) -> float:
+    """Distance from point p to the segment a-b."""
+    dx, dy = bx - ax, by - ay
+    t = max(0.0, min(1.0, ((px - ax) * dx + (py - ay) * dy) / max(dx * dx + dy * dy, 1e-9)))
+    return math.hypot(px - (ax + t * dx), py - (ay + t * dy))
+
+
 def _direction(angle: float | None) -> str:
     """Which way a mark points (screen y grows downward); "" for a short or round mark."""
     if angle is None:
@@ -306,6 +313,79 @@ class Scene:
         for i, p in enumerate(found):
             p.id = f"P{i + 1}"
         return found
+
+    def graph_edges(self) -> list[tuple[Line, Line, str]]:
+        """The edges of a drawn graph, read from the picture: two nodes are joined when a line
+        of ink runs between their circles; its weight is the number label sitting on that line.
+        The tutor gets this list, so it can't invent an edge that isn't there."""
+        if hasattr(self, "_edges"):
+            return self._edges
+        nodes = [l for l in self.lines if l.kind == "node"]
+        labels = [l for l in self.lines if l.kind != "node" and re.fullmatch(r"-?\d{1,3}", l.text.strip())]
+        self._edges: list[tuple[Line, Line, str]] = []
+        if len(nodes) < 3:
+            return self._edges
+        gray = np.asarray(self.image.convert("L"))
+        dark = gray.mean() < 110
+        ink = ((gray > 100) if dark else (gray < 170)).astype(np.uint8)  # thin anti-aliased lines are light grey
+        inv = 1 / self.scale
+        # Only the lines: blank out the node circles first. (Not the weight labels: one sitting on a
+        # line would cut it in two, and digits are too short to pass for a line themselves.)
+        for n in nodes:
+            cv2.circle(ink, (int(n.box.cx * inv), int(n.box.cy * inv)), int(n.box.w / 2 * inv * 1.15), 0, -1)
+        r = float(np.median([n.box.w / 2 for n in nodes])) * inv
+        segs = cv2.HoughLinesP(ink * 255, 1, np.pi / 180, threshold=int(r), minLineLength=int(r), maxLineGap=int(r / 3))
+        if segs is None:
+            return self._edges
+        centres = [(n, n.box.cx * inv, n.box.cy * inv, n.box.w / 2 * inv) for n in nodes]
+        wide = cv2.dilate(ink, np.ones((5, 5), np.uint8))
+        H, W = ink.shape
+
+        def node_at(x, y, away_x, away_y):
+            # Follow the line on from this end (the detector often breaks one long line into
+            # pieces) until it reaches a node's circle; small gaps (a weight label) are bridged.
+            dx, dy = x - away_x, y - away_y
+            n_ = math.hypot(dx, dy) or 1.0
+            dx, dy = dx / n_, dy / n_
+            px, py, gap = float(x), float(y), 0.0
+            for _ in range(int(40 * r)):
+                for n, cx, cy, rad in centres:
+                    if math.hypot(px - cx, py - cy) < rad * 1.25:
+                        return n
+                px, py = px + dx * 2, py + dy * 2
+                if not (0 <= px < W and 0 <= py < H):
+                    return None
+                gap = 0.0 if wide[int(py), int(px)] else gap + 2
+                if gap > r * 0.8:
+                    return None  # the line ends in empty space
+            return None
+
+        found: dict[tuple[str, str], tuple[Line, Line]] = {}
+        for x1, y1, x2, y2 in segs[:, 0]:
+            a, b = node_at(x1, y1, x2, y2), node_at(x2, y2, x1, y1)
+            if a is None or b is None or a is b:
+                continue
+            key = tuple(sorted((a.text, b.text)))
+            found.setdefault(key, (a, b))
+        claimed: set[int] = set()
+        pairs = []
+        for a, b in found.values():
+            ax, ay, bx, by = a.box.cx, a.box.cy, b.box.cx, b.box.cy
+            d = math.hypot(bx - ax, by - ay)
+            cands = []
+            for k, lab in enumerate(labels):
+                t = ((lab.box.cx - ax) * (bx - ax) + (lab.box.cy - ay) * (by - ay)) / (d * d)
+                dist = _seg_dist(lab.box.cx, lab.box.cy, ax, ay, bx, by)
+                if 0.1 < t < 0.9 and dist < max(3.0 * lab.box.h, 0.3 * d):
+                    cands.append((dist, k))
+            pairs.append((a, b, sorted(cands)))
+        # each weight label belongs to the one edge it sits closest to
+        for a, b, cands in sorted(pairs, key=lambda p: p[2][0][0] if p[2] else 1e9):
+            k = next((k for _, k in cands if k not in claimed), None)
+            if k is not None:
+                claimed.add(k)
+            self._edges.append((a, b, labels[k].text.strip() if k is not None else ""))
+        return self._edges
 
     def part_for(self, target) -> Region | None:
         """The figure part a target names: "P7", or a description {"ink": "red", "points": "right"}."""

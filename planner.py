@@ -89,7 +89,7 @@ WALKTHROUGH = """STEP-BY-STEP WALKTHROUGH MODE
 - Values that change go in "tag" next to the thing they belong to (a new tag crosses the old one out). Notes are for reasons, not values.
 - Finish with a "summary" giving the result.
 Recipes (use the one that fits; anything else: same idea, show each state change and say why):
-- Graph shortest path (Dijkstra): circle the start and tag it "d=0"; ONE tag listing every other node as its target with text "∞". From the node just settled, relax EVERY edge to an unsettled neighbour: trace the edge, tag the neighbour if it improves (say the sum, "1 + 2 = 3, better than infinity"). Say which unsettled node is now smallest and why it goes next; circle it. Stop exploring the moment the target is circled. Then trace the final path edge by edge in red, and a summary with the path and cost.
+- Graph shortest path (Dijkstra): use ONLY the edges in GRAPH EDGES, with exactly those weights. Circle the start and tag it "d=0" (say every other node starts unknown, at infinity; don't write it). From the node just settled, go through EVERY one of its edges in GRAPH EDGES to an unsettled neighbour: trace that edge, then tag the neighbour if its distance improves (say the sum, "1 + 2 = 3"). Say which unsettled node now has the smallest distance and why it goes next; circle it. Stop exploring the moment the target is circled. Then trace the final path edge by edge in red, and a summary with the path and cost.
 - BFS / DFS: circle the start; tag each node with its level or visit number as it is discovered; trace the edge it was discovered through; circle a node when it is visited.
 - In graphs, vertices are the lines marked (node); target them by those ids, never by an edge weight. Only trace between two nodes joined by an edge in the picture. Only circle nodes that are settled or visited.
 - Sorting / arrays: for each comparison, circle or box the two items and say which is bigger; when they swap, tag both positions with their new values. Tag the state after each pass.
@@ -97,10 +97,9 @@ Recipes (use the one that fits; anything else: same idea, show each state change
 - Physics / formula problems: mark each given quantity with its value, write the formula, substitute step by step, then the result with units.
 Example (Dijkstra, start X, target Z; X-Y costs 2, Y-Z costs 3, X-Z costs 9):
 {"op":"circle","target":"<X>","say":"We start at X."}
-{"op":"tag","target":"<X>","text":"d=0","say":"Its distance is zero."}
-{"op":"tag","target":["<Y>","<Z>"],"text":"∞","say":"Every other node starts at infinity, because we haven't reached it yet."}
+{"op":"tag","target":"<X>","text":"d=0","say":"Its distance is zero. Every other node starts unknown, at infinity."}
 {"op":"trace","from":"<X>","to":"<Y>","say":"From X, the edge to Y costs 2."}
-{"op":"tag","target":"<Y>","text":"d=2","say":"That beats infinity, so Y becomes 2."}
+{"op":"tag","target":"<Y>","text":"d=2","say":"So Y becomes 2."}
 {"op":"trace","from":"<X>","to":"<Z>","say":"The edge to Z costs 9."}
 {"op":"tag","target":"<Z>","text":"d=9","say":"So for now Z is 9."}
 {"op":"circle","target":"<Y>","say":"The smallest unsettled distance is Y, with 2, so we settle Y next."}
@@ -141,6 +140,12 @@ def _elements(scene: Scene, drawing: bool = True) -> str:
         rows.append(f"{ln.id} {scene.to_model(ln.box)} {json.dumps(text, ensure_ascii=False)}{kind}")
     regs = [f"{r.id} {scene.to_model(r.box)}" for r in scene.visible_regions()]
     out = "TEXT LINES\n" + ("\n".join(rows) or "(none)") + "\n\nREGIONS\n" + ("\n".join(regs) or "(none)")
+    edges = scene.graph_edges()
+    if edges:
+        # Read by the app from the drawn lines: the model must not invent or drop an edge.
+        out += ("\n\nGRAPH EDGES (read from the picture; these are the ONLY edges, with their weights; "
+                "target nodes by their L id)\n" + "\n".join(
+                    f"{a.text} ({a.id}) - {b.text} ({b.id}): {w or '?'}" for a, b, w in edges))
     if drawing and scene.visible_parts():
         # No list of marks on purpose: given one, the model copies a wrong entry from it; asked to
         # describe what it sees, it is right nearly every time, and the app finds the mark.
