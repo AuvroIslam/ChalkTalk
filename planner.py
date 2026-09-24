@@ -64,6 +64,7 @@ HOW TO TEACH
 - Mark first, then explain: circle or highlight the thing, then a note on it.
 - Notes: at most 15 words, plain language, an analogy or a concrete example when possible. Never just restate the screen.
 - Notes explain the idea itself. Never narrate what you are doing ("I'll open...", "Let me...").
+- Never speculate about what you cannot see or know (what someone said or likely said, private details). Explain what is visible instead.
 - Every note that uses fetched context ends with its source in brackets: "(video 3:12)", "(p. 14)", "(slide 5)", "(Wikipedia)".
 - 3 to 8 actions in total, never more. Don't cover the whole screen.
 - Use only ids from the lists. Don't place notes yourself.
@@ -164,6 +165,10 @@ _NARRATION = re.compile(r"(?i)^\s*(i'?ll|i will|i'm going to|let me|let's (check
                         r"open(ing)? the|scroll|see the (section|page)|look for)\b")
 
 
+_SPECULATION = re.compile(r"(?i)\b(likely|probably|presumably|might have|may have|must have)\b[^.]{0,40}"
+                          r"\b(said|say|explained|covered|mentioned|talked|showed|discussed|meant)\b")
+
+
 def _cite_hint(name: str, result: str) -> str:
     if name.startswith(("get_video", "search_video")):
         form = "(video m:ss)"
@@ -230,8 +235,10 @@ class Session:
         raw_on_action = on_action
 
         def on_action(a: dict) -> None:
-            # Notes must explain, not narrate ("I'll check the section..."). Drop those.
-            if a.get("op") in ("note", "summary") and _NARRATION.match(str(a.get("text", ""))):
+            # Notes must explain, not narrate ("I'll check the section...") or speculate about
+            # what someone said ("your lecturer likely explained..."). Drop those.
+            text = str(a.get("text", ""))
+            if a.get("op") in ("note", "summary") and (_NARRATION.match(text) or _SPECULATION.search(text)):
                 return
             raw_on_action(a)
         if len(self.messages) == 1:

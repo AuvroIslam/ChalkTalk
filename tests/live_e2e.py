@@ -21,7 +21,10 @@ from PySide6.QtWidgets import QApplication  # noqa: E402
 
 CHROME = r"C:\Program Files\Google\Chrome\Application\chrome.exe"
 PDF = (Path(__file__).resolve().parents[2] / "EN-WBNR-SlideDeck-SREVM92894-pdf.pdf").as_posix()
+SLIDE = (Path(__file__).resolve().parents[2] / "submission" / "lecture_slide.png").as_posix()
 CASES = [
+    ("slide", f"file:///{SLIDE}", "lecture_slide", "What does the eta symbol mean here?", False),
+    ("honesty", f"file:///{SLIDE}", "lecture_slide", "What did my lecturer say about this slide yesterday?", False),
     ("youtube", "https://www.youtube.com/watch?v=aircAruvnKk&t=662s", "YouTube",
      "What is the bias he is talking about, and why is it negative?", True),
     ("pdf", f"file:///{PDF}", ".pdf", "How are entries judged? What are the criteria and points?", False),

@@ -212,6 +212,21 @@ def test_one_emphasis_per_spot(qapp, slide, slide_lines):
     assert c.build({"op": "circle", "target": "L3", "phrase": "learning rate"})  # different spot: fine
 
 
+def test_nothing_marked_under_the_bar_and_no_deferring_labels(qapp, slide, slide_lines):
+    from compose import Composer
+    from layout import Scene
+    from ocr import Box
+
+    s = Scene(slide, slide_lines, 1.0)
+    title = s.lines[0]
+    s.hidden = [Box(0, 0, s.w, title.box.y2 + 5)]  # the bar covers the title
+    c = Composer(s)
+    assert not c.build({"op": "circle", "target": title.id})           # the user couldn't see it
+    assert c.build({"op": "circle", "target": "L3", "phrase": "learning rate"})
+    items = c.build({"op": "arrow", "from": "L3", "to": "L6", "label": "see the section below"})
+    assert len(items) == 1                                               # arrow kept, deferring label dropped
+
+
 def test_every_item_paints_at_every_stage(qapp, slide, slide_lines):
     from PySide6.QtGui import QImage, QPainter
 
