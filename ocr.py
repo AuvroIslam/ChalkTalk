@@ -173,15 +173,22 @@ def recover_small_text(img: Image.Image, lines: list[Line]) -> list[Line]:
             continue  # only short labels (node names, numbers); anything else is likely an icon
         t = tokens[k]
         box, in_circle = t, False
-        for (ccx, ccy, r) in circles:  # a letter inside a circle stands for the whole node
-            if (t.cx - ccx) ** 2 + (t.cy - ccy) ** 2 < (0.7 * r) ** 2 and r < 4 * max(t.w, t.h):
+        for (ccx, ccy, r) in circles:  # a letter centred in a circle stands for the whole node
+            if (t.cx - ccx) ** 2 + (t.cy - ccy) ** 2 < (0.35 * r) ** 2 and 0.25 <= t.h / (2 * r) <= 0.8:
                 box, in_circle = Box(ccx - r, ccy - r, 2 * r, 2 * r), True
                 break
         if not in_circle and text in ("I", "l", "|", "i"):
             text = "1"  # a lone stroke outside a node is the digit one (an edge weight)
         out.append(Line(id="", text=text, box=box, words=[Word(text, box)], kind="node" if in_circle else ""))
-    # Node labels read one by one lose case and I/1, O/0: decide from the graph as a whole.
+    # Only a real graph counts: 3+ circled labels of about the same size. Otherwise these
+    # "letters" are icons (reload, search, avatars) and would only mislead the tutor.
     nodes = [l for l in out if l.kind == "node"]
+    if nodes:
+        med = sorted(l.box.w for l in nodes)[len(nodes) // 2]
+        nodes = [l for l in nodes if 0.65 * med <= l.box.w <= 1.5 * med]
+    if len(nodes) < 3:
+        return []
+    out = [l for l in out if l.kind != "node" or l in nodes]
     numbered = sum(l.text.isdigit() for l in nodes) > len(nodes) / 2
     for l in nodes:
         t = l.text

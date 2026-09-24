@@ -104,6 +104,8 @@ class Scene:
 
         self.regions = self._find_regions(edges)
         self.region_by_id = {r.id: r for r in self.regions}
+        self.parts = self._find_parts(np.asarray(image.convert("RGB")))
+        self.part_by_id = {p.id: p for p in self.parts}
 
         self.hidden: list[Box] = []  # covered by our own bar / the taskbar: never mark things there
 
@@ -175,6 +177,59 @@ class Scene:
         found.sort(key=lambda b: (round(b.y / 40), b.x))
         return [Region(f"R{i + 1}", b) for i, b in enumerate(found)]
 
+    def _find_parts(self, rgb: np.ndarray) -> list[Region]:
+        """The separate marks inside a drawing (a whiteboard, chalk video, diagram):
+        the pivot, the rod, the force arrow, a hand-written "F". OCR can't name these,
+        so each gets an id the tutor can point at. Photos and thumbnails are skipped."""
+        inv = 1 / self.scale
+        found: list[Box] = []
+        for r in self.regions:
+            if min(r.box.w, r.box.h) < 150:
+                continue  # toolbars and strips: their icons aren't a figure
+            pb = r.box.scaled(inv)
+            x0, y0, x1, y1 = int(pb.x), int(pb.y), int(pb.x2), int(pb.y2)
+            patch = rgb[y0:y1, x0:x1].astype(np.int16)
+            if patch.size == 0:
+                continue
+            bg = np.median(patch.reshape(-1, 3), axis=0)
+            ink = np.abs(patch - bg).max(axis=2) > 70
+            if ink.mean() > 0.15:
+                continue  # busy all over: a photo or a thumbnail, not a drawing
+            for ln in self.lines:  # text is already listed as lines
+                b = ln.box.pad(3).scaled(inv)
+                ink[max(0, int(b.y) - y0):max(0, int(b.y2) - y0 + 1), max(0, int(b.x) - x0):max(0, int(b.x2) - x0 + 1)] = False
+            k = max(3, int(5 * inv))
+            mask = cv2.dilate(ink.astype(np.uint8), np.ones((k, k), np.uint8))
+            n, labels, stats, _ = cv2.connectedComponentsWithStats(mask, 8)
+            ra = (x1 - x0) * (y1 - y0)
+            for i in range(1, n):
+                x, y, w, h, _a = stats[i]
+                b = Box(float(x + x0), float(y + y0), float(w), float(h)).scaled(self.scale)
+                if max(b.w, b.h) < 18 or min(b.w, b.h) < 10 and max(b.w, b.h) < 45 or w * h > 0.5 * ra:
+                    continue  # specks and dash fragments, or the frame itself
+                k = int(min(6, round((b.w + b.h) / 120)))
+                if k < 2:
+                    found.append(b)
+                    continue
+                # One long connected stroke (a rod with its pivot and the force arrow) is
+                # really several things: split it by position so each piece gets a name.
+                ys, xs = np.nonzero((labels[y:y + h, x:x + w] == i) & ink[y:y + h, x:x + w])
+                pts = np.column_stack([xs, ys]).astype(np.float32)[:: max(1, len(xs) // 4000)]
+                if len(pts) < 4 * k:
+                    found.append(b)
+                    continue
+                crit = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 1.0)
+                _, lab, _ = cv2.kmeans(pts, k, None, crit, 3, cv2.KMEANS_PP_CENTERS)
+                for c in range(k):
+                    q = pts[lab.ravel() == c]
+                    if len(q):
+                        qx, qy = q[:, 0].min(), q[:, 1].min()
+                        found.append(Box(float(x + x0 + qx), float(y + y0 + qy), float(q[:, 0].max() - qx + 1),
+                                         float(q[:, 1].max() - qy + 1)).scaled(self.scale).pad(3))
+        found = sorted(found, key=lambda b: -b.w * b.h)[:16]
+        found.sort(key=lambda b: (round(b.y / 40), b.x))
+        return [Region(f"P{i + 1}", b) for i, b in enumerate(found)]
+
     # ---- the model's view -------------------------------------------------
 
     def set_view(self, view: Box, px_w: int, px_h: int) -> None:
@@ -202,6 +257,10 @@ class Scene:
     def visible_regions(self) -> list[Region]:
         v = self.view
         return [r for r in self.regions if r.box.cx >= v.x and r.box.cx <= v.x2 and r.box.cy >= v.y and r.box.cy <= v.y2]
+
+    def visible_parts(self) -> list[Region]:
+        v = self.view
+        return [r for r in self.parts if r.box.cx >= v.x and r.box.cx <= v.x2 and r.box.cy >= v.y and r.box.cy <= v.y2]
 
     # ---- resolving what the model points at -------------------------------
 
@@ -240,6 +299,8 @@ class Scene:
                 r = self.region_by_id[t].box
                 inside = [l for l in self.lines if r.x <= l.box.cx <= r.x2 and r.y <= l.box.cy <= r.y2]
                 return inside, [r]
+            if t in self.part_by_id:
+                return [], [self.part_by_id[t].box]
         return [], []
 
     def resolve(self, target=None, phrase: str | None = None) -> Box | None:
@@ -247,8 +308,18 @@ class Scene:
         if phrase:
             hit = self.find_phrase(phrase, lines) if lines else None
             if hit is None:
-                # The model sometimes gets the id wrong but the words right.
-                hit = self.find_phrase(phrase, self.visible_lines() or self.lines)
+                # The model sometimes gets a line id wrong but the words right: search all text.
+                # But when it points into a figure, the same words in a far-off title are a
+                # different thing (the "why is it pointing at the title" bug): search nearby only.
+                pool = self.visible_lines() or self.lines
+                text_target = bool(lines) and not (isinstance(target, str) and target.strip().upper()[:1] in "RP")
+                if boxes and not text_target:
+                    near = boxes[0]
+                    for b in boxes[1:]:
+                        near = near.union(b)
+                    m = max(40.0, 3 * max((l.box.h for l in lines), default=20.0))
+                    pool = [l for l in pool if near.x - m <= l.box.cx <= near.x2 + m and near.y - m <= l.box.cy <= near.y2 + m]
+                hit = self.find_phrase(phrase, pool)
             if hit is not None:
                 return hit
         if not boxes:
