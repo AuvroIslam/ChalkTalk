@@ -54,10 +54,36 @@ ACTIONS
 {"op":"number","target":"L5","n":1}   step-order badge
 {"op":"note","target":"L4","phrase":"learning rate","text":"How big each step is. Too big = you overshoot."}   handwritten explanation; the app finds empty space beside the target and draws a pointer
 {"op":"diagram","target":"R1","title":"Gradient descent","nodes":["Guess","Measure error","Step downhill"],"edges":[[0,1,""],[1,2,""],[2,0,"repeat"]]}   a small sketch (max 5 nodes) when a picture explains better than words: a flow, cycle, cause->effect, comparison, analogy
+{"op":"trace","from":"L5","to":"L9","color":"green"}   a thick marker stroke along a connection, e.g. a graph edge or one step of a path
+{"op":"tag","target":"L5","text":"d = 4"}   a small value written right next to something; a new tag on the same target crosses out the old value
 {"op":"summary","text":"..."}   one-line takeaway, last
 
-Any action may add "say": one short spoken-style sentence shown as a caption while it is drawn.
+VOICE: you are speaking aloud while you draw, like a teacher at a whiteboard. Every teaching step has "say": one or two short, natural spoken sentences (the note text is the short written version; "say" is what you tell the student). The next step waits until you finish speaking.
 Colors: red, blue, green, purple, orange. Keep one colour per idea (a mark and its note share a colour).
+
+STEP-BY-STEP WALKTHROUGHS (algorithms like Dijkstra, BFS or sorting; derivations; calculations; "show me how"; "trace it"):
+- Actually perform the real algorithm, in the real order, and get every number right. Never skip to the answer. Up to 30 actions.
+- Graph shortest paths (Dijkstra): 1) circle the start, tag it "d=0", say every other node starts at infinity. 2) From the node you just settled, relax EVERY edge to an unsettled neighbour: trace that edge, then tag the neighbour with its new distance if it improves (say the sum, e.g. "1 + 2 = 3, better than infinity"). 3) Say which unsettled node now has the smallest distance and that this is why it goes next; circle it. 4) Repeat until the TARGET is circled (settled), then stop exploring. 5) Trace the final path edge by edge along real edges, then a summary with the path and cost.
+- In walkthroughs: values go in "tag" (never notes or diagrams), only settled nodes get circled, and only trace between two nodes joined by an edge in the picture.
+- Graph vertices are the lines marked (node). Target nodes by those ids, never by an edge-weight label next to them.
+- The final path is traced edge by edge: every edge of the path gets its own trace.
+- STOP EXPLORING AT THE TARGET: the moment you circle the target node, do not relax its edges or settle anything else. Go straight to tracing the final path and the summary. (Only run the whole graph if no target was asked for.)
+- A trace that belongs with the tag right after it may skip "say"; the tag says it.
+- Example (start X, target Z; X-Y costs 2, Y-Z costs 3, X-Z costs 9):
+{"op":"circle","target":"<X>","say":"We start at X. Its distance is zero, and every other node starts at infinity."}
+{"op":"tag","target":"<X>","text":"d=0"}
+{"op":"trace","from":"<X>","to":"<Y>"}
+{"op":"tag","target":"<Y>","text":"d=2","say":"X to Y costs 2. That beats infinity, so Y becomes 2."}
+{"op":"trace","from":"<X>","to":"<Z>"}
+{"op":"tag","target":"<Z>","text":"d=9","say":"X to Z costs 9, so for now Z is 9."}
+{"op":"circle","target":"<Y>","say":"The smallest unsettled distance is Y, with 2, so we settle Y next."}
+{"op":"trace","from":"<Y>","to":"<Z>"}
+{"op":"tag","target":"<Z>","text":"d=5","say":"Through Y, Z costs 2 plus 3, which is 5. That beats 9, so Z improves to 5."}
+{"op":"circle","target":"<Z>","say":"Z is now the smallest, so it's settled. We've reached the target."}
+{"op":"trace","from":"<X>","to":"<Y>","color":"red"}
+{"op":"trace","from":"<Y>","to":"<Z>","color":"red","say":"So the cheapest route is X, then Y, then Z."}
+{"op":"summary","text":"Shortest path X → Y → Z, cost 5","say":"The answer: X to Y to Z, with a total cost of 5."}
+- Other walkthroughs: same idea. Show each state change on the drawing and say why.
 
 HOW TO TEACH
 - Answer the user's actual question. If they only point at an area, explain the most confusing idea in it.
@@ -66,7 +92,7 @@ HOW TO TEACH
 - Notes explain the idea itself. Never narrate what you are doing ("I'll open...", "Let me...").
 - Never speculate about what you cannot see or know (what someone said or likely said, private details). Explain what is visible instead.
 - Every note that uses fetched context ends with its source in brackets: "(video 3:12)", "(p. 14)", "(slide 5)", "(Wikipedia)".
-- 3 to 8 actions in total, never more. Don't cover the whole screen.
+- Usually 3 to 8 actions (walkthroughs: as many steps as they need, max 30). Don't cover the whole screen.
 - Use only ids from the lists. Don't place notes yourself.
 - Write every note, label and caption in the language of the user's question (a Bangla question gets Bangla notes), even when the screen is in English."""
 
@@ -97,7 +123,8 @@ def _elements(scene: Scene) -> str:
     rows = []
     for ln in scene.visible_lines()[:220]:
         text = ln.text if len(ln.text) <= 90 else ln.text[:87] + "..."
-        rows.append(f"{ln.id} {scene.to_model(ln.box)} {json.dumps(text, ensure_ascii=False)}")
+        kind = " (node)" if ln.kind == "node" else ""  # a label inside a drawn circle, e.g. a graph vertex
+        rows.append(f"{ln.id} {scene.to_model(ln.box)} {json.dumps(text, ensure_ascii=False)}{kind}")
     regs = [f"{r.id} {scene.to_model(r.box)}" for r in scene.visible_regions()]
     return "TEXT LINES\n" + ("\n".join(rows) or "(none)") + "\n\nREGIONS\n" + ("\n".join(regs) or "(none)")
 
@@ -141,6 +168,7 @@ NOT enough when:
 - the answer would otherwise be a guess.
 Otherwise it IS enough. Don't request lookups just to be thorough: speed matters.
 Asking to explain, simplify, give an example of, or walk through what is visible is ALWAYS enough.
+Running or tracing something drawn on screen (a graph, an equation, code, a diagram, a table) is ALWAYS enough: the tutor reads the picture itself (which edge a weight belongs to, how things connect).
 
 If not enough: "missing" says in a few words what is missing, and "lookups" lists at most 3 lookups using only the listed tools, with exact arguments (unused fields null). For read_webpage and every search, put what to look for in "query". If enough: "missing" is "" and "lookups" is [].
 
@@ -164,6 +192,10 @@ def _check_model(tool_names: list[str]) -> type[BaseModel]:
 _NARRATION = re.compile(r"(?i)^\s*(i'?ll|i will|i'm going to|let me|let's (check|open|look)|checking|looking (at|for)|"
                         r"open(ing)? the|scroll|see the (section|page)|look for)\b")
 
+
+_WALKTHROUGH = re.compile(r"(?i)step[- ]by[- ]step|walk (me )?through|\btrace\b|show (me )?how|\blive\b|simulat|dry[- ]?run|"
+                          r"how (can|do|would) (i|we|you) (reach|get|go)|shortest path|run (the|this) algorithm|"
+                          r"\bsolve\b|\bderive\b|work (it )?out|go through|demonstrat")
 
 _SPECULATION = re.compile(r"(?i)\b(likely|probably|presumably|might have|may have|must have)\b[^.]{0,40}"
                           r"\b(said|say|explained|covered|mentioned|talked|showed|discussed|meant)\b")
@@ -231,6 +263,7 @@ class Session:
     def _ask(self, question: str, on_action: Callable[[dict], None]) -> None:
         question = question.strip() or "Explain this to me."
         self._question = question
+        self._walkthrough = bool(_WALKTHROUGH.search(question))
         self._honest_note, self._honest_done = "", False
         raw_on_action = on_action
 
@@ -255,14 +288,17 @@ class Session:
 
         tools = self.toolbox.specs()
         # The typed context check runs in parallel with the drawing request.
-        check = _pool.submit(self._check, question) if tools and config.CONTEXT_CHECK else None
+        # (A walkthrough of something on screen needs nothing more: the picture is the source.)
+        check = _pool.submit(self._check, question) if tools and config.CONTEXT_CHECK and not self._walkthrough else None
         for round_no in range(config.MAX_TOOL_ROUNDS + 1):
             last = round_no == config.MAX_TOOL_ROUNDS
             gate = self._gate(check) if round_no == 0 else None
             # With the typed check running, it alone decides round 0; the drawer just draws.
-            text, calls, held = self._stream(tools, force_answer=last or gate is not None or self._must_answer,
+            text, calls, held = self._stream(tools, force_answer=last or gate is not None or self._must_answer
+                                             or (self._walkthrough and round_no == 0),
                                              on_action=on_action, gate=gate,
-                                             reasoning=config.REASONING if round_no == 0 else config.AFTER_LOOKUP_REASONING)
+                                             reasoning=("low" if self._walkthrough else config.REASONING) if round_no == 0
+                                             else config.AFTER_LOOKUP_REASONING)
             self._must_answer = False
             if self._cancel.is_set():
                 return
@@ -404,7 +440,7 @@ class Session:
                     for action in parser.feed(delta.content):
                         key = json.dumps({k: action.get(k) for k in ("op", "target", "phrase", "from", "to", "text")},
                                          sort_keys=True)
-                        if key not in seen and len(seen) < 9:
+                        if key not in seen and len(seen) < (32 if self._walkthrough else 9):
                             seen.add(key)
                             (on_action if state else held.append)(action)
                 for tc in delta.tool_calls or []:

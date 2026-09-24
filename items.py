@@ -71,9 +71,14 @@ class Circle(Item):
         self.ink = ink
         rnd = random.Random(int(box.x * 7 + box.y * 13))
         cx, cy = box.cx, box.cy
-        # A superellipse hugs a line of text much tighter than an ellipse,
-        # so the loop doesn't swallow the neighbouring words.
+        # A superellipse hugs a line of text much tighter than an ellipse, so the loop
+        # doesn't swallow neighbouring words. A roughly square target (a graph node,
+        # an icon) gets a true round circle instead.
+        round_ = 0.8 < box.w / max(box.h, 1) < 1.25
         rx, ry = box.w / 2 + 5 + box.h * 0.1, box.h / 2 + 5 + box.h * 0.15
+        if round_:
+            rx = ry = max(box.w, box.h) / 2 + 9
+        power = 1.0 if round_ else 0.6
         start = rnd.uniform(-2.6, -2.0)  # start top-left like a hand does
         phase = rnd.uniform(0, 6.28)
         self.pts = []
@@ -82,8 +87,8 @@ class Circle(Item):
             f = k / n
             a = start + f * 2 * math.pi * 1.08
             c, s = math.cos(a), math.sin(a)
-            ex = math.copysign(abs(c) ** 0.6, c)
-            ey = math.copysign(abs(s) ** 0.6, s)
+            ex = math.copysign(abs(c) ** power, c)
+            ey = math.copysign(abs(s) ** power, s)
             wob = 1 + 0.03 * math.sin(3 * a + phase) + 0.06 * f
             self.pts.append(QPointF(cx + rx * wob * ex, cy + ry * wob * ey))
 
@@ -273,6 +278,50 @@ class Group(Item):
                 break
             x.paint(p, 1.0 if t >= 1 else min(1.0, at / x.duration))
             at -= x.duration
+
+
+class Trace(Item):
+    """A thick marker stroke along a connection (a graph edge, a path step)."""
+
+    duration = 0.6
+
+    def __init__(self, a: QPointF, b: QPointF, ink: str):
+        self.ink = ink
+        n = 24
+        self.pts = [QPointF(a.x() + (b.x() - a.x()) * k / n, a.y() + (b.y() - a.y()) * k / n) for k in range(n + 1)]
+
+    def paint(self, p, t):
+        p.setPen(_pen(self.ink, 8.0, 150))
+        _draw_partial(p, self.pts, t)
+
+
+class Tag(Item):
+    """A small value written right next to something ("d = 5"). A new tag on the
+    same thing strikes out the old value first, like correcting it on a board."""
+
+    duration = 0.5
+
+    def __init__(self, box: Box, text: str, font: QFont, top: float, ink: str, card: str, strike: Box | None):
+        self.box, self.text, self.font, self.top, self.ink, self.card, self.strike = box, text, font, top, ink, card, strike
+        self.pts = [QPointF(box.x + 6, box.cy), QPointF(box.x2 - 6, box.cy)]  # for the mascot's eyes
+
+    def paint(self, p, t):
+        if self.strike is not None:
+            s = self.strike
+            p.setPen(_pen(self.ink, 2.6))
+            _draw_partial(p, [QPointF(s.x + 2, s.y2 - 4), QPointF(s.x2 - 2, s.y + 4)], min(1.0, t / 0.35))
+        if t < 0.3 and self.strike is not None:
+            return
+        f = min(1.0, (t - (0.3 if self.strike is not None else 0)) / 0.7)
+        r = _rect(self.box)
+        p.setOpacity(min(1.0, f * 2))
+        p.setPen(_pen(self.ink, 1.6, 220))
+        p.setBrush(QBrush(_color(self.card, 245)))
+        p.drawRoundedRect(r, r.height() / 2, r.height() / 2)
+        p.setOpacity(1)
+        n = len(self.text) if f >= 1 else max(0, int(len(self.text) * f))
+        if n:
+            _text_with_halo(p, QPointF(self.box.x + 9, self.box.y + self.top), self.text[:n], self.font, self.ink, None)
 
 
 def pen_at(item: Item, t: float) -> QPointF | None:

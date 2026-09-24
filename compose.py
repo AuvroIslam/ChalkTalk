@@ -13,11 +13,12 @@ from PySide6.QtCore import QPointF
 from PySide6.QtGui import QFont, QFontMetricsF
 
 import config
-from items import Arrow, Badge, Circle, Frame, Group, Highlight, Item, Label, Note, RoundBox, Underline
+from items import Arrow, Badge, Circle, Frame, Group, Highlight, Item, Label, Note, RoundBox, Tag, Trace, Underline
 from layout import Scene, hex_rgb, luminance
 from ocr import Box
 
 LIGHT_CARD, DARK_CARD = "#FFF6BF", "#1E2A3A"
+INKS_STRONG = "#E11D48"  # the final answer path
 _DEFERS = re.compile(r"(?i)\b(see|look (at|for)|check|refer to|scroll)\b.*\b(section|page|below|above|article|link)\b")
 
 
@@ -89,6 +90,9 @@ class Composer:
         self.last_ink_name = "red"
         self.marked: list[Box] = []
         self.skipped_duplicates = 0
+        self.tags: dict[tuple[int, int], Box] = {}  # latest value tag per target, to strike out on update
+        self.tag_text: dict[tuple[int, int], str] = {}
+        self.tag_font = _font(config.NOTE_FONT_PX, True, "Segoe UI")
         self.max_note_w = min(300.0, scene.w * 0.3)
 
     # -- helpers -------------------------------------------------------------
@@ -198,6 +202,38 @@ class Composer:
                                ink, self._halo(box)))
         return items
 
+    # -- walkthroughs: traces and value tags --------------------------------------
+
+    def _op_trace(self, a):
+        s = self._resolve_visible(a.get("from"), a.get("from_phrase"))
+        e = self._resolve_visible(a.get("to"), a.get("to_phrase"))
+        if s is None or e is None:
+            return []
+        ink = self.scene.ink(self._ink_name(a), s.union(e))
+        return [Trace(_edge_point(s, _center(e), 1), _edge_point(e, _center(s), 1), ink)]
+
+    def _op_tag(self, a):
+        b = self._resolve_visible(a.get("target"), a.get("phrase"))
+        text = str(a.get("text", "")).strip()
+        if b is None or not text:
+            return []
+        if len(text) > 14:  # a sentence isn't a value: write it as a note instead
+            return self._op_note(dict(a, op="note"))
+        key = (round(b.cx / 8), round(b.cy / 8))
+        old = self.tags.get(key)
+        if old is not None and self.tag_text.get(key, "").replace(" ", "") == text.replace(" ", ""):
+            self.skipped_duplicates += 1
+            return []  # same value again: nothing to correct
+        self.tag_text[key] = text
+        fm = QFontMetricsF(self.tag_font)
+        top, _, bottom = _metrics(fm)
+        w, h = fm.horizontalAdvance(text) + 18, top + bottom + 10
+        box, _ = self.scene.place(w, h, old.pad(2) if old is not None else b)
+        self.tags[key] = box
+        card = self._card_for(box)
+        name = self._ink_name(a)
+        return [Tag(box, text, self.tag_font, top + 5, self._ink_on_card(name, card), card, old)]
+
     # -- notes -----------------------------------------------------------------
 
     def _note(self, text: str, target: Box | None, name: str, font: QFont) -> Note:
@@ -232,7 +268,23 @@ class Composer:
         text = str(a.get("text", "")).strip()
         if not text:
             return []
-        return [self._note("★ " + text, None, a.get("color") or "green", _font(config.NOTE_FONT_PX + 1, True))]
+        return self._path_traces(text) + [
+            self._note("★ " + text, None, a.get("color") or "green", _font(config.NOTE_FONT_PX + 1, True))]
+
+    def _path_traces(self, text: str) -> list[Item]:
+        """A summary that names a path ("A → I → E") gets that path drawn edge by edge on
+        the graph, so the answer is always shown on the picture, not just written."""
+        m = re.search(r"\b([A-Za-z0-9]{1,3})((?:\s*(?:→|->|—>|to)\s*[A-Za-z0-9]{1,3}\b){1,12})", text)
+        if not m:
+            return []
+        names = [m.group(1)] + re.findall(r"(?:→|->|—>|to)\s*([A-Za-z0-9]{1,3})\b", m.group(2))
+        nodes = {ln.text.upper(): ln.box for ln in self.scene.lines if ln.kind == "node"}
+        boxes = [nodes.get(n.upper()) for n in names]
+        if len(boxes) < 2 or any(b is None for b in boxes):
+            return []
+        ink = INKS_STRONG
+        return [Trace(_edge_point(s, _center(e), 1), _edge_point(e, _center(s), 1), ink)
+                for s, e in zip(boxes, boxes[1:])]
 
     # -- diagrams --------------------------------------------------------------
 
