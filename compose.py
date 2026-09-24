@@ -276,6 +276,31 @@ class Composer:
             self.numbered[part.id] = str(a.get("n", "?"))[:2]
         return [Badge(c, str(a.get("n", "?"))[:2], ink, self.badge_font)]
 
+    def _hug(self, w: float, h: float, a: Box) -> Box:
+        """A spot for a small value touching `a` (a graph node, or the value it replaces), as a
+        teacher writes "d=3" right beside the node: the least covered of the spots all round it.
+        Only when every spot touching it is taken does it move one step further out."""
+        g = 3.0
+        best, best_cost = None, 1e18
+        for ring in range(3):
+            o = ring * (h + 2)
+            spots = [(a.x2 + g + o, a.cy - h / 2), (a.x - g - w - o, a.cy - h / 2),       # right, left
+                     (a.cx - w / 2, a.y - g - h - o), (a.cx - w / 2, a.y2 + g + o),     # above, below
+                     (a.x2 + g + o, a.y - h), (a.x - w - g - o, a.y - h),               # corners
+                     (a.x2 + g + o, a.y2), (a.x - w - g - o, a.y2)]
+            for k, (x, y) in enumerate(spots):
+                box = Box(x, y, w, h)
+                if self.scene.is_hidden(box):
+                    continue
+                cost = self.scene.space_cost(box) + ring * 60 + k * 0.5
+                if cost < best_cost:
+                    best, best_cost = box, cost
+            if best is not None and best_cost < 60 * (ring + 1):
+                break  # a good enough spot this close: don't go further out
+        if best is None:
+            best, _ = self.scene.place(w, h, a)
+        return best
+
     def _badge_spot(self, part) -> QPointF:
         """Where a teacher writes the number of a mark in a drawing: just past its free end,
         carrying on its line (unmistakably its own), else beside that end; the least covered
@@ -394,7 +419,8 @@ class Composer:
         fm = QFontMetricsF(font)
         top, _, bottom = _metrics(fm)
         w, h = fm.horizontalAdvance(text) + 18, top + bottom + 10
-        box, _ = self.scene.place(w, h, old.pad(2) if old is not None else b)
+        box = self._hug(w, h, old if old is not None else b)
+        self.scene.reserve(box.pad(3), 1.0)
         self.tags[key] = box
         card = self._card_for(box)
         name = self._ink_name(a)
@@ -459,10 +485,10 @@ class Composer:
     def _path_traces(self, text: str) -> list[Item]:
         """A summary that names a path ("A → I → E") gets that path drawn edge by edge on
         the graph, so the answer is always shown on the picture, not just written."""
-        m = re.search(r"\b([A-Za-z0-9]{1,3})((?:\s*(?:→|->|—>|to)\s*[A-Za-z0-9]{1,3}\b){1,12})", text)
+        m = re.search(r"\b([A-Za-z0-9]{1,3})((?:\s*(?:→|->|—>|to|then)\s*[A-Za-z0-9]{1,3}\b){1,12})", text)
         if not m:
             return []
-        names = [m.group(1)] + re.findall(r"(?:→|->|—>|to)\s*([A-Za-z0-9]{1,3})\b", m.group(2))
+        names = [m.group(1)] + re.findall(r"(?:→|->|—>|to|then)\s*([A-Za-z0-9]{1,3})\b", m.group(2))
         nodes = {ln.text.upper(): ln.box for ln in self.scene.lines if ln.kind == "node"}
         boxes = [nodes.get(n.upper()) for n in names]
         if len(boxes) < 2 or any(b is None for b in boxes):

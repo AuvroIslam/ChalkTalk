@@ -18,6 +18,10 @@ from PIL import Image
 from ocr import Box, Line, Word
 
 CELL = 6  # logical px per occupancy-grid cell
+# How much covering screen text costs a note, against distance from its target. Low on purpose:
+# a note right beside what it explains (on a card) beats a clear spot across the screen. At this
+# weight a note moves to empty space only if that is within ~2 note-heights further away.
+CONTENT_COST = 0.012
 
 
 @dataclass
@@ -707,7 +711,7 @@ class Scene:
         y0, y1, x0, x1 = self._cells(b)
         if b.x < 0 or b.y < 0 or b.x2 > self.w or b.y2 > self.h or y1 <= y0 or x1 <= x0:
             return 1e9
-        return float((self.occ[y0:y1, x0:x1] + self.reserved[y0:y1, x0:x1] * 40).sum())
+        return float((self.occ[y0:y1, x0:x1] * CONTENT_COST + self.reserved[y0:y1, x0:x1] * 40).sum())
 
     def place(self, w: float, h: float, near: Box | None = None) -> tuple[Box, bool]:
         """Best spot for a w x h drawing: empty, on screen, close to `near`.
@@ -715,8 +719,9 @@ class Scene:
         w = min(w, self.w - 2 * CELL)
         h = min(h, self.h - 2 * CELL)
         cw, ch = max(1, math.ceil(w / CELL)), max(1, math.ceil(h / CELL))
-        # Covering content is OK-ish (the note gets a card); covering another drawing is not.
-        cost = self.occ + self.reserved * 40
+        # Being in the right place (next to what it explains) matters most. Covering screen text is
+        # fine (the note gets a solid card, so it stays readable); covering another drawing is not.
+        cost = self.occ * CONTENT_COST + self.reserved * 400  # our own notes never pile up
         if near is not None:
             cost = cost.copy()
             self._mark(cost, near.pad(4), 50.0)  # never cover what we're explaining
@@ -743,7 +748,8 @@ class Scene:
         else:
             i, j = self._best_leader_spot(score, w, h, near)
         box = Box(float(j * CELL), float(i * CELL), w, h)
-        covers = float(sums[i, j]) > 0.5
+        y0, y1, x0, x1 = self._cells(box)
+        covers = float(self.occ[y0:y1, x0:x1].sum()) > 0.5  # on screen content: give it a readable card
         self.reserve(box.pad(4), 1.0)
         return box, covers
 
