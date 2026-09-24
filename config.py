@@ -44,6 +44,13 @@ HOTKEY = _get("CHALK_HOTKEY", "ctrl+shift+space")
 # Press, then just talk: captures the screen and listens straight away.
 VOICE_HOTKEY = _get("CHALK_VOICE_HOTKEY", "ctrl+g")
 
+# Teaching voice: each step is spoken aloud, and drawing waits for the voice.
+VOICE_OUT = _get("CHALK_VOICE_OUT", "1") == "1"
+VOICE_NAME = _get("CHALK_VOICE_NAME", "Zira")  # a Windows voice: Zira, David, Mark...
+VOICE_RATE = float(_get("CHALK_VOICE_RATE", "1.1"))
+# Drawing speed: 1.0 = quick; lower = slower, like a hand writing on a board.
+DRAW_SPEED = float(_get("CHALK_DRAW_SPEED", "0.5"))
+
 # Speech to text (Microsoft Foundry deployment)
 STT_ENDPOINT = _get("CHALK_STT_ENDPOINT", "")
 STT_KEY = _get("CHALK_STT_KEY", "")

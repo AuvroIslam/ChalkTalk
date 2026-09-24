@@ -27,6 +27,7 @@ class Mascot(QWidget):
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.mode = "idle"
         self.level = 0.0  # microphone loudness 0..1 while listening
+        self.talking = False  # the teacher's voice is speaking: the mouth moves
         self.gaze_provider: Callable[[], QPointF | None] | None = None  # global point to look at
         self._t0 = time.monotonic()
         self._pupil = QPointF(0, 0)
@@ -189,7 +190,11 @@ class Mascot(QWidget):
         p.setPen(QPen(QColor("#0F172A"), 1.4, Qt.SolidLine, Qt.RoundCap))
         p.setBrush(Qt.NoBrush)
         mouth = QPainterPath()
-        if self.mode == "listening":
+        if self.talking and self.mode not in ("listening", "sad"):
+            open_m = 0.6 + 1.9 * abs(math.sin(t * 11)) * (0.6 + 0.4 * math.sin(t * 3.7))
+            p.setBrush(QColor("#0F172A"))
+            p.drawEllipse(QPointF(0, 4.6), 2.3, max(0.5, open_m))
+        elif self.mode == "listening":
             r = 1.2 + 2.2 * self.level
             p.setBrush(QColor("#0F172A"))
             p.drawEllipse(QPointF(0, 4.5), r * 0.9, r)
