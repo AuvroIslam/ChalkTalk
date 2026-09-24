@@ -255,7 +255,11 @@ _NARRATION = re.compile(r"(?i)^\s*(i'?ll|i will|i'm going to|let me|let's (check
 
 _WALKTHROUGH = re.compile(r"(?i)step[- ]by[- ]step|walk (me )?through|\btrace\b|show (me )?how|\blive\b|simulat|dry[- ]?run|"
                           r"how (can|do|would) (i|we|you) (reach|get|go)|shortest path|run (the|this) algorithm|"
-                          r"\bsolve\b|\bderive\b|work (it )?out|go through|demonstrat")
+                          r"\bsolve\b|\bderive\b|work (it )?out|go through|demonstrat|"
+                          # naming an algorithm, or a route ("from A to E"), asks to see it run
+                          r"dijkstra|bellman|kruskal|\bprim'?s\b|breadth[- ]first|depth[- ]first|\bbfs\b|\bdfs\b|"
+                          r"\ba\*|topological|(bubble|merge|quick|insertion|selection|heap) ?sort|binary search|"
+                          r"\bfrom [a-z0-9]{1,2} to [a-z0-9]{1,2}\b")
 
 # A question about something beyond the screen (what was said, earlier or later, elsewhere).
 _ELSEWHERE = re.compile(r"(?i)\b(said|say|says|saying|mention|mentioned|earlier|before|previous|later|next|"
