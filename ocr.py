@@ -7,6 +7,7 @@ boxes OCR measured, instead of trusting the model to guess pixel coordinates.
 from __future__ import annotations
 
 import asyncio
+import math
 from dataclasses import dataclass, field
 
 import PySide6.QtCore  # noqa: F401 - must load before winrt: the other order crashes (clashing C++ runtime DLLs)
@@ -142,6 +143,13 @@ def recover_small_text(img: Image.Image, lines: list[Line]) -> list[Line]:
     tokens = [t for t in tokens if t.w <= 3.5 * t.h][:120]
     if not tokens:
         return []
+    # Sheet rows follow the screen's own rows: a browser's tab strip and toolbar icons then share
+    # rows with each other, not with the graph's letters. (One icon in a row can make Windows OCR
+    # drop the whole row, letters and all.)
+    # Group by size first (a graph's labels are all about the same height; UI icons and tab
+    # letters are smaller), then by row on screen.
+    band = max(8.0, 2.5 * sorted(t.h for t in tokens)[len(tokens) // 2])
+    tokens.sort(key=lambda t: (-round(math.log2(max(t.h, 1)) * 3), int(t.cy // band), t.x))
 
     # A sheet of rows: "is H is 2 is 9 is ...". OCR drops lone characters but reads a
     # line of real words perfectly; the separator word tells us where each token ends.
@@ -155,16 +163,31 @@ def recover_small_text(img: Image.Image, lines: list[Line]) -> list[Line]:
         c = gray_img.crop((int(t.x) - pad, int(t.y) - pad, int(t.x2) + pad, int(t.y2) + pad))
         raw.append(ImageOps.invert(c) if dark_bg else c)
     found: dict[int, str] = {}
-    # Windows OCR drops a whole row now and then depending on glyph size, so tokens it
-    # missed get another sheet of their own at a different size.
-    for th in (42, 32, 56):
-        todo = [k for k in range(len(raw)) if k not in found]
+    # Windows OCR drops a whole row now and then, depending on glyph size and on what else is in
+    # the row (an icon can sink it). So tokens a pass missed get more passes, each with a different
+    # size and a different mix of neighbours, and whatever any pass reads is kept.
+    by_size = list(range(len(raw)))
+    by_place = sorted(by_size, key=lambda k: (int(tokens[k].cy // band), tokens[k].x))
+    # screen areas: tokens far apart vertically (a toolbar vs the page) never share a row
+    area = {k: int(tokens[k].cy // (4 * band)) for k in by_size}
+    for th, order, per_row, groups in ((42, by_size, 8, None), (42, by_place, 8, area), (32, by_place, 6, area),
+                                       (56, by_size, 6, None), (42, by_place[::-1], 4, area),
+                                       (48, by_size[::-1], 4, None)):
+        todo = [k for k in order if k not in found]
         if not todo:
             break
         font = ImageFont.truetype("arial.ttf", int(th * 0.8))
         sep_w = int(ImageDraw.Draw(Image.new("L", (1, 1))).textlength(SEP, font=font))
         crops = {k: raw[k].resize((max(1, int(raw[k].width * th / raw[k].height)), th), Image.LANCZOS) for k in todo}
-        found.update(_read_sheet(crops, todo, th, sp, SEP, font, sep_w))
+        found.update(_read_sheet(crops, todo, th, sp, SEP, font, sep_w, per_row, groups))
+    # Heavy bold letters (a graph's node names) next to the thin "is" often break the line for
+    # Windows OCR. Written three times in a row ("BBB"), a lone letter is a word it reads reliably.
+    for th, per_row in ((42, 6), (42, 4), (56, 4)):
+        todo = [k for k in by_place if k not in found]
+        if not todo:
+            break
+        crops = {k: raw[k].resize((max(1, int(raw[k].width * th / raw[k].height)), th), Image.LANCZOS) for k in todo}
+        found.update(_read_triples(crops, todo, th, per_row, area))
     circles = _circles(gray)
     out = []
     for k, text in found.items():
@@ -200,12 +223,61 @@ def recover_small_text(img: Image.Image, lines: list[Line]) -> list[Line]:
     return out
 
 
-def _read_sheet(crops, todo, th, sp, SEP, font, sep_w) -> dict[int, str]:
+def _read_triples(crops, todo, th, per_row: int, groups) -> dict[int, str]:
+    """Each token written three times as one word ("BBB", "111111"), well apart from the next."""
+    rows: list[list[int]] = []
+    for k in todo:
+        if rows and len(rows[-1]) < per_row and groups[k] == groups[rows[-1][-1]]:
+            rows[-1].append(k)
+        else:
+            rows.append([k])
+    gap, row_h, m = 170, th + 70, 100
+    width = m + max(sum(3 * crops[k].width + 6 + gap for k in r) for r in rows) + m
+    sheet = Image.new("L", (width, row_h * len(rows) + 2 * m), 255)
+    cells: dict[int, tuple[int, int, int, int]] = {}
+    for ri, r in enumerate(rows):
+        x, y = m, m + ri * row_h
+        for k in r:
+            c = crops[k]
+            for i in range(3):
+                sheet.paste(c, (x + i * (c.width + 3), y))
+            cells[k] = (x, y, x + 3 * c.width + 6, y + th)
+            x += 3 * c.width + 6 + gap
+    result = asyncio.run(_recognize(sheet.convert("RGB")))
+    got: dict[int, str] = {}
+    for ln in result.lines:
+        for w in ln.words:
+            r = w.bounding_rect
+            cx, cy = r.x + r.width / 2, r.y + r.height / 2
+            for k, (x0, y0, x1, y1) in cells.items():
+                if x0 - 20 <= cx <= x1 + 20 and y0 - 20 <= cy <= y1 + 20:
+                    got[k] = got.get(k, "") + w.text
+                    break
+    out = {}
+    for k, t in got.items():
+        t = t.strip(".,;:'\"`")
+        n = len(t) // 3
+        if n and len(t) == 3 * n and t == t[:n] * 3:
+            out[k] = t[:n]  # a clean triple; anything else is a misread, better left out
+    return out
+
+
+def _read_sheet(crops, todo, th, sp, SEP, font, sep_w, per_row_max: int = 8, groups=None) -> dict[int, str]:
+    """groups: token -> group key; a row never mixes groups (keeps a toolbar's icons out of the
+    graph's rows)."""
     from PIL import ImageDraw
 
-    n_rows = max(1, -(-len(todo) // 8))
-    per_row = -(-len(todo) // n_rows)  # rows of even length: OCR skips very short lines
-    rows = [todo[i:i + per_row] for i in range(0, len(todo), per_row)]
+    runs: list[list[int]] = []
+    for k in todo:
+        if runs and (groups is None or groups[k] == groups[runs[-1][-1]]):
+            runs[-1].append(k)
+        else:
+            runs.append([k])
+    rows = []
+    for run in runs:
+        n_rows = max(1, -(-len(run) // per_row_max))
+        per_row = -(-len(run) // n_rows)  # rows of even length: OCR skips very short lines
+        rows += [run[i:i + per_row] for i in range(0, len(run), per_row)]
     hash_w = sep_w
     row_h = th + 60
     m = 100  # white margins: Windows OCR can drop a line that hugs the image edge

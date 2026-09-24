@@ -125,8 +125,13 @@ def check_dijkstra(ctx, src, dst):
     inf_nodes = {n for n, vals in ctx["tags"].items() if math.inf in vals}
     if len(inf_nodes) < len(names) - 1:
         problems.append(f"∞ written on {len(inf_nodes)}/{len(names) - 1} other nodes")
+    settled = set(ctx.get("circled", []))
     for n, v in final.items():
-        if v is not None and v != math.inf and v != dist[n]:
+        # A node settled (circled) must show its true distance. One still waiting when the search
+        # stops at the target may keep a temporary value, but never one below the true distance.
+        if v is None or v == math.inf:
+            continue
+        if v < dist[n] or n in settled and v != dist[n]:
             problems.append(f"{n}: wrote {v:g}, true distance {dist[n]}")
     if final.get(dst) != dist[dst]:
         problems.append(f"target {dst} ends at {final.get(dst)}, true {dist[dst]}")
