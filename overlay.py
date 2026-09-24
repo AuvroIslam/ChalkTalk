@@ -259,11 +259,16 @@ class Bar(QWidget):
         p.drawRoundedRect(card, 30, 30)
         p.end()
 
+    position = "top"  # or "bottom": set per question to whichever edge of the screen is emptier
+
     def box_on(self, screen) -> Box:
         """Where the card sits (logical coords on that screen) - drawings avoid it."""
-        g = screen.geometry()
+        g, avail = screen.geometry(), screen.availableGeometry()
         w = min(900, g.width() - 40)
-        return Box((g.width() - w) / 2, 12, w, 196)
+        h = 196
+        if self.position == "bottom":  # just above the taskbar
+            return Box((g.width() - w) / 2, avail.bottom() - g.y() - h - 12, w, h)
+        return Box((g.width() - w) / 2, 12, w, h)
 
     def _place(self, screen) -> None:
         g = screen.geometry()

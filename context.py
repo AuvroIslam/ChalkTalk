@@ -579,6 +579,8 @@ def detect(fg: Foreground) -> Source | None:
         if url.startswith("file:///") and path.lower().endswith(DOC_EXTS):
             local = urllib.parse.unquote(url[len("file:///"):])
             return _cached(f"doc:{local}:{os.path.getmtime(local)}", lambda: DocumentSource(local))
+        if not url.startswith(("http://", "https://")):
+            return None  # a local image or file that isn't a document: the screen is the source
         if path.lower().endswith(".pdf"):
             return _cached(f"url:{url}", lambda: DocumentSource(_download(url)))
         return WebPageSource(url, fg.title)

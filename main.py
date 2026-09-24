@@ -25,7 +25,7 @@ from PIL import Image
 
 from compose import Composer, warm_up
 from layout import Scene
-from ocr import ocr_lines
+from ocr import Box, ocr_lines
 import voice
 from overlay import Bar, Canvas
 
@@ -240,6 +240,7 @@ class App:
         screen = QGuiApplication.screenAt(QCursor.pos()) or QGuiApplication.primaryScreen()
         self.shot = grab_monitor_under_cursor()
         self.scale = screen.geometry().width() / self.shot.image.width
+        self.bar.position = self._emptier_edge(screen)
         self.gen += 1
         self.session = None
         self.ocr_job = self.pool.submit(ocr_lines, self.shot.image)  # runs while you type
@@ -255,6 +256,21 @@ class App:
             self._listen_after_capture = False
             self.on_speak()
 
+    def _emptier_edge(self, screen) -> str:
+        """Put the bar where it covers the least: compare how busy the top and bottom bands are."""
+        import cv2
+        import numpy as np
+
+        img = self.shot.image
+        small = np.asarray(img.convert("L").resize((img.width // 4, img.height // 4)))
+        edges = cv2.Canny(small, 40, 120) > 0
+        g, avail = screen.geometry(), screen.availableGeometry()
+        band = int(230 / self.scale / 4)  # the bar's height plus a margin, in quarter-pixels
+        bottom_end = int((avail.bottom() - g.y()) / self.scale / 4)
+        top = edges[:band].mean()
+        bottom = edges[max(0, bottom_end - band):bottom_end].mean()
+        return "bottom" if bottom < top * 0.8 else "top"
+
     def on_submit(self, question: str):
         follow_up = self.session is not None
         if follow_up:
@@ -268,7 +284,11 @@ class App:
             self.bar.listening(False)
         self.answering = True
         selection = self.canvas.selection_box()
-        pill_box = self.bar.box_on(self.canvas.screen()).pad(10)
+        scr = self.canvas.screen()
+        pill_box = [self.bar.box_on(scr).pad(10)]
+        geo, avail = scr.geometry(), scr.availableGeometry()  # (not `g`: that's this question's generation)
+        if avail.bottom() < geo.bottom():  # the taskbar: never draw on it
+            pill_box.append(Box(0, avail.bottom() - geo.y(), geo.width(), geo.bottom() - avail.bottom() + 1))
         self.canvas.clear()
         self.canvas.begin_draw()
         self.bar.begin_draw(question)
@@ -282,7 +302,9 @@ class App:
             if not follow_up:
                 lines = self.ocr_job.result()
                 scene = Scene(self.shot.image, lines, self.scale)
-                scene.reserve(pill_box, 3.0)
+                for b in pill_box:  # the bar and the taskbar: no notes there, and no marks under them
+                    scene.reserve(b, 3.0)
+                scene.hidden = list(pill_box)
                 if DEMO:
                     session = DemoSession(scene, self.shot.image, selection)
                 else:

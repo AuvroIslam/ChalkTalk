@@ -105,6 +105,8 @@ class Scene:
         self.regions = self._find_regions(edges)
         self.region_by_id = {r.id: r for r in self.regions}
 
+        self.hidden: list[Box] = []  # covered by our own bar / the taskbar: never mark things there
+
         # Mapping between the image the model saw and logical coordinates.
         self.view = Box(0, 0, self.w, self.h)
         self.view_px = (self.w, self.h)
@@ -197,6 +199,9 @@ class Scene:
         return [r for r in self.regions if r.box.cx >= v.x and r.box.cx <= v.x2 and r.box.cy >= v.y and r.box.cy <= v.y2]
 
     # ---- resolving what the model points at -------------------------------
+
+    def is_hidden(self, b: Box) -> bool:
+        return any(h.x <= b.cx <= h.x2 and h.y <= b.cy <= h.y2 for h in self.hidden)
 
     def _target_lines(self, target) -> tuple[list[Line], list[Box]]:
         if isinstance(target, list):

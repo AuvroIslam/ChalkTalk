@@ -7,6 +7,7 @@ halos, cards) is decided here from measured geometry.
 from __future__ import annotations
 
 import math
+import re
 
 from PySide6.QtCore import QPointF
 from PySide6.QtGui import QFont, QFontMetricsF
@@ -17,6 +18,7 @@ from layout import Scene, hex_rgb, luminance
 from ocr import Box
 
 LIGHT_CARD, DARK_CARD = "#FFF6BF", "#1E2A3A"
+_DEFERS = re.compile(r"(?i)\b(see|look (at|for)|check|refer to|scroll)\b.*\b(section|page|below|above|article|link)\b")
 
 
 def _font(px: int, bold: bool = False, family: str | None = None) -> QFont:
@@ -136,8 +138,12 @@ class Composer:
         self.marked.append(b)
         return False
 
+    def _resolve_visible(self, target, phrase=None) -> Box | None:
+        b = self.scene.resolve(target, phrase)
+        return None if b is None or self.scene.is_hidden(b) else b  # under our bar: the user can't see it
+
     def _mark(self, a: dict, kind):
-        b = self.scene.resolve(a.get("target"), a.get("phrase"))
+        b = self._resolve_visible(a.get("target"), a.get("phrase"))
         if b is None or self._already_marked(b):
             return []
         name = self._ink_name(a)
@@ -155,14 +161,14 @@ class Composer:
         return self._mark(a, Frame)
 
     def _op_highlight(self, a):
-        b = self.scene.resolve(a.get("target"), a.get("phrase"))
+        b = self._resolve_visible(a.get("target"), a.get("phrase"))
         if b is None or self._already_marked(b):
             return []
         dark = self.scene.is_dark(b)
         return [Highlight(b, "#FACC15" if dark else "#FFE14D", 80 if dark else 110)]
 
     def _op_number(self, a):
-        b = self.scene.resolve(a.get("target"), a.get("phrase"))
+        b = self._resolve_visible(a.get("target"), a.get("phrase"))
         if b is None:
             return []
         ink = self.scene.ink(self._ink_name(a), b)
@@ -171,8 +177,8 @@ class Composer:
         return [Badge(c, str(a.get("n", "?"))[:2], ink, self.badge_font)]
 
     def _op_arrow(self, a):
-        s = self.scene.resolve(a.get("from"), a.get("from_phrase"))
-        e = self.scene.resolve(a.get("to"), a.get("to_phrase"))
+        s = self._resolve_visible(a.get("from"), a.get("from_phrase"))
+        e = self._resolve_visible(a.get("to"), a.get("to_phrase"))
         if s is None or e is None:
             return []
         ink = self.scene.ink(self._ink_name(a), s.union(e))
@@ -180,6 +186,8 @@ class Composer:
         p1 = _edge_point(e, _center(s), 6)
         items: list[Item] = [Arrow(p0, p1, ink)]
         label = a.get("label")
+        if isinstance(label, str) and _DEFERS.search(label):
+            label = None  # "see the section below" answers nothing: keep the arrow, drop the label
         if isinstance(label, str) and label.strip():
             fm = QFontMetricsF(self.small_font)
             top, _, bottom = _metrics(fm)
