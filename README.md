@@ -7,7 +7,7 @@
 <p align="center"><strong>Draws on your screen and guides you step by step.</strong></p>
 
 <p align="center">
-  <a href="https://drive.google.com/file/d/1tyDAC3urIA2XVTGFPTeudc7vWEQE5GWY/view?usp=sharing"><strong>Watch the demo →</strong></a>
+  <a href="https://drive.google.com/file/d/1oqesfuelxwPcgqC9rlyDKKiG4R_-H1wk/view?usp=sharing"><strong>Watch the demo →</strong></a>
   &nbsp;·&nbsp;
   <a href="#running-it">Run it locally</a>
   &nbsp;·&nbsp;
@@ -15,7 +15,7 @@
 </p>
 
 <p align="center">
-  <a href="https://drive.google.com/file/d/1tyDAC3urIA2XVTGFPTeudc7vWEQE5GWY/view?usp=sharing">
+  <a href="https://drive.google.com/file/d/1oqesfuelxwPcgqC9rlyDKKiG4R_-H1wk/view?usp=sharing">
     <img src="docs/screenshots/00-demo-thumbnail.png" width="880" alt="Watch the ChalkTalk demo video: it runs Dijkstra live on a lecture slide" />
   </a>
   <br />
@@ -157,7 +157,7 @@ Testing is what caught the real problems. On a real PDF in the browser, ChalkTal
 <p align="center">
   <img src="docs/pitch-deck/9.png" width="820" alt="Demo: ChalkTalk runs Dijkstra live, on the slide" />
   <br />
-  <sub><em><a href="https://drive.google.com/file/d/1tyDAC3urIA2XVTGFPTeudc7vWEQE5GWY/view?usp=sharing">▶ Watch the demo video</a> (or <a href="docs/ChalkTalk_Dijkstra_Demo.mp4">the raw recording</a>): a real PDF, drawn and spoken live, on Microsoft Foundry.</em></sub>
+  <sub><em><a href="https://drive.google.com/file/d/1oqesfuelxwPcgqC9rlyDKKiG4R_-H1wk/view?usp=sharing">▶ Watch the demo video</a> (or <a href="docs/ChalkTalk_Dijkstra_Demo.mp4">the raw recording</a>): a real PDF, drawn and spoken live, on Microsoft Foundry.</em></sub>
 </p>
 
 ---
